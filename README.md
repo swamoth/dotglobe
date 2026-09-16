@@ -75,7 +75,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 11.1 kB |
+| Core bundle, gzipped | under 20 kB | 11.3 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -112,7 +112,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **30.5 kB** | **11.1 kB** |
+| **dotglobe** | **31.0 kB** | **11.3 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
@@ -148,6 +148,7 @@ cache that the harness cannot clear.
 - [x] Drag, inertia, zoom, auto-rotate
 - [x] Render on demand
 - [x] Rings that pulse outward from a place
+- [x] Paths that follow the surface, for a cable or a route
 - [x] Vanilla core, plus a React hook at `dotglobe/react`
 - [x] A demo page with real coastlines
 

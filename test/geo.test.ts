@@ -3,6 +3,7 @@ import {
   ARC_CLEARANCE_MAX, ARC_CLEARANCE_MIN, arcAltitudeFor, arcClearanceFor, arcHeight, centralAngle,
   haversineKm, interpolate, slerp, toRad, unitVector, wrapLng, type LatLng,
 } from '../src/geo';
+import { pathSegments } from '../src/arcs';
 
 const NYC = { lat: 40.7128, lng: -74.006 };
 const LONDON = { lat: 51.5074, lng: -0.1278 };
@@ -94,5 +95,28 @@ describe('arc height', () => {
       expect(p.min).toBeGreaterThan(0);
       expect(p.mid).toBeCloseTo(arcClearanceFor(centralAngle(a, b)), 3);
     }
+  });
+});
+
+describe('paths', () => {
+  it('expands a path into one segment for each pair of points', () => {
+    const segs = pathSegments([{ points: [[0, 0], [10, 10], [20, 20]], stroke: 3, color: '#fff' }]);
+    expect(segs).toHaveLength(2);
+    expect(segs[0]).toMatchObject({ startLat: 0, startLng: 0, endLat: 10, endLng: 10, stroke: 3 });
+    expect(segs[1]).toMatchObject({ startLat: 10, startLng: 10, endLat: 20, endLng: 20 });
+    // A path follows the surface, so its segments never bow away from it.
+    for (const s of segs) expect(s.clearance).toBe(0);
+  });
+
+  it('draws nothing for a path with fewer than two points', () => {
+    expect(pathSegments([{ points: [] }, { points: [[5, 5]] }])).toHaveLength(0);
+  });
+
+  it('keeps every path in one list', () => {
+    const segs = pathSegments([
+      { points: [[0, 0], [1, 1]] },
+      { points: [[2, 2], [3, 3], [4, 4]] },
+    ]);
+    expect(segs).toHaveLength(3);
   });
 });

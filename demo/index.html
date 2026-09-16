@@ -54,6 +54,27 @@ globe.setArcs([
   { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#9ece6a' },
 ]);
 
+// Paths follow the surface: two submarine-cable style routes, sampled along great circles.
+const route = (a, b, n = 24) => {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const f = i / n;
+    const la1 = a[0] * Math.PI / 180, lo1 = a[1] * Math.PI / 180;
+    const la2 = b[0] * Math.PI / 180, lo2 = b[1] * Math.PI / 180;
+    const d = 2 * Math.asin(Math.sqrt(Math.sin((la2-la1)/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin((lo2-lo1)/2)**2));
+    const A = Math.sin((1-f)*d)/Math.sin(d), B = Math.sin(f*d)/Math.sin(d);
+    const x = A*Math.cos(la1)*Math.cos(lo1) + B*Math.cos(la2)*Math.cos(lo2);
+    const y = A*Math.cos(la1)*Math.sin(lo1) + B*Math.cos(la2)*Math.sin(lo2);
+    const z = A*Math.sin(la1) + B*Math.sin(la2);
+    pts.push([Math.atan2(z, Math.hypot(x,y)) * 180/Math.PI, Math.atan2(y,x) * 180/Math.PI]);
+  }
+  return pts;
+};
+globe.setPaths([
+  { points: route([51.5074,-0.1278], [40.71,-74.01]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
+  { points: route([-33.87,151.21], [1.29,103.85]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
+]);
+
 // One HTML element for each city, moved by project() on every frame.
 const pins = CITIES.map((c) => {
   const el = document.createElement('div');

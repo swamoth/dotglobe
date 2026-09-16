@@ -26,6 +26,11 @@ export interface Arc {
    * the distance, from 0.03 for a short hop to 0.15 for an antipodal route.
    */
   clearance?: number;
+  /**
+   * Height above the surface along the whole arc, in globe radii. The default is 0.002, which
+   * lifts the ribbon clear of the surface so the occlusion test cannot drop it against itself.
+   */
+  altitude?: number;
   /** A hex color. The default is white. */
   color?: string;
   /** Opacity in 0..1. The default is 1. */
@@ -36,6 +41,11 @@ export interface Arc {
 const COLS = 1024;
 /** Steps along one arc. A ribbon of 48 steps has no visible corner at any zoom this globe allows. */
 const SEGMENTS = 48;
+
+export interface ArcPassOptions {
+  /** Steps along one arc. A path segment is short and straight, so it needs far fewer. */
+  segments?: number;
+}
 
 const VERT = `#version 300 es
 precision highp float;
@@ -93,8 +103,8 @@ void main() {
     p2 = (sin((1.0 - t2) * omega) * a + sin(t2 * omega) * b) / sinOmega;
   }
   // A half sine is 0 at both ends and never negative, thus an arc never cuts into the sphere.
-  vec3 w1 = p1 * (1.0 + style.x * sin(PI * t));
-  vec3 w2 = p2 * (1.0 + style.x * sin(PI * t2));
+  vec3 w1 = p1 * (1.0 + style.z + style.x * sin(PI * t));
+  vec3 w2 = p2 * (1.0 + style.z + style.x * sin(PI * t2));
   vWorld = w1;
 
   vec3 s1 = toScreen(w1);
@@ -145,7 +155,8 @@ export interface ArcPass {
   destroy(): void;
 }
 
-export function createArcPass(gl: WebGL2RenderingContext): ArcPass {
+export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOptions = {}): ArcPass {
+  const segments = Math.max(1, Math.round(options.segments ?? SEGMENTS));
   const prog: Program = program(gl, VERT, FRAG);
   const vao = gl.createVertexArray()!;
 
@@ -177,7 +188,7 @@ export function createArcPass(gl: WebGL2RenderingContext): ArcPass {
       gl.uniform1f(u.uAspect, v.aspect);
       gl.uniform2f(u.uViewport, viewport[0], viewport[1]);
       gl.uniform1i(u.uCols, COLS);
-      gl.uniform1i(u.uSegments, SEGMENTS);
+      gl.uniform1i(u.uSegments, segments);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, ends);
@@ -189,7 +200,7 @@ export function createArcPass(gl: WebGL2RenderingContext): ArcPass {
       gl.bindTexture(gl.TEXTURE_2D, color);
       gl.uniform1i(u.uColor, 2);
 
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (SEGMENTS + 1) * 2, count);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (segments + 1) * 2, count);
       gl.bindVertexArray(null);
       return true;
     },
@@ -212,6 +223,7 @@ export function createArcPass(gl: WebGL2RenderingContext): ArcPass {
           { lat: arc.endLat, lng: arc.endLng },
         ));
         s[i * 4 + 1] = arc.stroke ?? 2;
+        s[i * 4 + 2] = arc.altitude ?? 0.002;
         const [r, g, b] = arc.color ? rgb(arc.color) : [1, 1, 1];
         c[i * 4] = r * 255;
         c[i * 4 + 1] = g * 255;
@@ -230,4 +242,43 @@ export function createArcPass(gl: WebGL2RenderingContext): ArcPass {
       gl.deleteTexture(color);
     },
   };
+}
+
+export interface Path {
+  /** The line, as [lat, lng] pairs. Fewer than two points draws nothing. */
+  points: readonly (readonly [number, number])[];
+  /** Width in pixels. The default is 2. */
+  stroke?: number;
+  /** Height above the surface, in globe radii. The default is 0.002. */
+  altitude?: number;
+  /** A hex color. The default is white. */
+  color?: string;
+  /** Opacity in 0..1. The default is 1. */
+  opacity?: number;
+}
+
+/**
+ * Expand paths into the arc segments that draw them.
+ *
+ * A path is a line that follows the surface, and an arc with no clearance is exactly that between
+ * two points. One segment for each pair therefore needs no second kind of pass, and the segments
+ * of every path go into one instanced draw call.
+ */
+export function pathSegments(paths: readonly Path[]): Arc[] {
+  const out: Arc[] = [];
+  for (const path of paths) {
+    for (let i = 1; i < path.points.length; i++) {
+      const a = path.points[i - 1];
+      const b = path.points[i];
+      out.push({
+        startLat: a[0], startLng: a[1], endLat: b[0], endLng: b[1],
+        clearance: 0,
+        stroke: path.stroke,
+        altitude: path.altitude,
+        color: path.color,
+        opacity: path.opacity,
+      });
+    }
+  }
+  return out;
 }

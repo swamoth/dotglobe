@@ -9,7 +9,7 @@
 import { view, project as projectPoint, unproject, MAX_LAT, type Camera, type View } from './camera';
 import { createSpherePass, type SphereStyle } from './sphere';
 import { createMarkerPass, type Marker, type MarkerPass } from './markers';
-import { createArcPass, type Arc, type ArcPass } from './arcs';
+import { createArcPass, pathSegments, type Arc, type ArcPass, type Path } from './arcs';
 import { createRingPass, type Ring, type RingPass } from './rings';
 import { unitVector } from './fibonacci';
 import { countryIndex, type CountryIndex } from './countries';
@@ -44,6 +44,8 @@ export interface Globe {
   setAutoRotate(degreesPerSecond: number): void;
   setMarkers(markers: readonly Marker[]): void;
   setArcs(arcs: readonly Arc[]): void;
+  /** Lines that follow the surface, for a cable or a route. */
+  setPaths(paths: readonly Path[]): void;
   /** Pulsing rings. While any ring exists the globe keeps drawing, because they animate. */
   setRings(rings: readonly Ring[]): void;
   /** Country shapes that `pick` tests. Pass the GeoJSON geometry of each country, in order. */
@@ -96,6 +98,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let markerPass: MarkerPass | null = null;
   let arcPass: ArcPass | null = null;
   let ringPass: RingPass | null = null;
+  let pathPass: ArcPass | null = null;
   let markerList: readonly Marker[] = [];
   let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
   let countries: CountryIndex | null = null;
@@ -145,7 +148,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
        * visitor waits for. A marker or an arc appears one frame after its shader is ready.
        */
       sphereDrew = sphere.draw(v, canvas.height);
-      layersDrew = (!arcPass || arcPass.draw(v, [canvas.width, canvas.height]))
+      layersDrew = (!pathPass || pathPass.draw(v, [canvas.width, canvas.height]))
+        && (!arcPass || arcPass.draw(v, [canvas.width, canvas.height]))
         && (!ringPass || ringPass.draw(v, clock))
         && (!markerPass || markerPass.draw(v));
     } catch (error) {
@@ -285,6 +289,12 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       arcPass.set(arcs);
       invalidate();
     },
+    setPaths(paths) {
+      // A path segment is short and nearly straight, so it needs far fewer steps than an arc.
+      pathPass ??= createArcPass(gl, { segments: 6 });
+      pathPass.set(pathSegments(paths));
+      invalidate();
+    },
     setRings(rings) {
       ringPass ??= createRingPass(gl);
       ringPass.set(rings);
@@ -332,6 +342,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       markerPass?.destroy();
       arcPass?.destroy();
       ringPass?.destroy();
+      pathPass?.destroy();
       listeners.clear();
     },
   };
