@@ -40,9 +40,21 @@ if (typeof mod.createGlobe !== 'function') {
     }
   }
 
+  /*
+   * The first WebGL2 context on a page costs about 80 ms in Chrome. That is the handshake with
+   * the GPU process, and no library can avoid it. Pay it here on a throwaway canvas, so the
+   * measurement below reports the work of dotglobe and not the start-up of the browser. The cold
+   * cost is reported on its own, because a page still pays it once.
+   */
+  const coldStart = performance.now();
+  document.createElement('canvas').getContext('webgl2');
+  const coldContextMs = performance.now() - coldStart;
+
   const start = performance.now();
   const globe = mod.createGlobe(canvas, { devicePixelRatio: dpr, interactive: false });
+  const afterCreate = performance.now();
   globe.setLand(land, COLS, ROWS);
+  const afterLand = performance.now();
 
   if (markers > 0 && typeof globe.setMarkers !== 'function') { done({ skipped: 'markers are not implemented yet' }); }
   else if (arcs > 0 && typeof globe.setArcs !== 'function') { done({ skipped: 'arcs are not implemented yet' }); }
@@ -59,8 +71,17 @@ if (typeof mod.createGlobe !== 'function') {
       })));
     }
 
-    globe.render();
-    const firstFrameMs = performance.now() - start;
+    /*
+     * Two numbers, and they measure different things.
+     *
+     * blocked: time the main thread cannot do anything else. The page freezes for this long.
+     * firstFrameMs: time until the first pixel. It includes the shader compile, which the driver
+     * now runs on its own thread, so the page stays free while it happens.
+     */
+    await globe.ready;
+    const afterDraw = performance.now();
+    const firstFrameMs = afterDraw - start;
+    const split = { create: afterCreate - start, land: afterLand - afterCreate, blocked: afterLand - start };
 
     const gl = globe.gl;
 
@@ -102,7 +123,7 @@ if (typeof mod.createGlobe !== 'function') {
     await new Promise((r) => setTimeout(r, 1000));
     globe.offRender(count);
 
-    done({ firstFrameMs, cpu, gpu, idleFrames, lit, markers, arcs });
+    done({ firstFrameMs, coldContextMs, split, cpu, gpu, idleFrames, lit, markers, arcs });
     globe.destroy();
   }
 }

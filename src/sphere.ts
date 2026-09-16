@@ -8,12 +8,16 @@
  * orthographic disc, a separate tint map, and a dot edge that is antialiased with a derivative.
  */
 
-import { program, texture, uniforms, upload, type TextureOptions } from './gl';
+import { program, texture, upload, type TextureOptions } from './gl';
 import { latticeSpacing } from './fibonacci';
 import type { View } from './camera';
 
-/** The index ladder in the shader decodes an index below 2^15. Keep the lattice under that. */
-export const MAX_DOTS = 32000;
+/**
+ * Upper bound on the lattice. The shader resolves an index with 32-bit integer math, so the old
+ * 2^15 ceiling of the WebGL1 method is gone. What binds now is the screen: past about 200000
+ * dots the spacing falls below one pixel and the dots merge into a solid shade.
+ */
+export const MAX_DOTS = 200000;
 
 export interface SphereStyle {
   /** Lattice points on the sphere. More points means smaller dots. */
@@ -89,29 +93,23 @@ vec3 nearestLattice(vec3 p, out float dist) {
 
   float best = PI;
   vec3 hit = vec3(0.0, 0.0, 1.0);
-  for (float s = 0.0; s < 4.0; s += 1.0) {
-    vec2 o = vec2(mod(s, 2.0), floor(s * 0.5));
-    float idx = dot(f, c + o);
-    if (idx > uDots || idx < 0.0) continue;
+  // An integer loop with a fixed count unrolls cleanly. A float loop that skips an iteration
+  // makes the platform compiler emit dynamic flow control, which costs compile time.
+  // clamp keeps an out-of-range candidate inside the lattice. Index 0 and index n are both real
+  // lattice points, at the poles, thus a clamped candidate can only win when it is truly nearest.
+  for (int s = 0; s < 4; ++s) {
+    vec2 o = vec2(float(s & 1), float(s >> 1));
+    float idx = clamp(dot(f, c + o), 0.0, uDots);
 
-    // fract(idx * (PHI - 1.0)) without losing precision on a large index.
-    float a = idx, b = 0.0;
-    if (a >= 16384.0) { a -= 16384.0; b += 0.868872; }
-    if (a >= 8192.0) { a -= 8192.0; b += 0.934436; }
-    if (a >= 4096.0) { a -= 4096.0; b += 0.467218; }
-    if (a >= 2048.0) { a -= 2048.0; b += 0.733609; }
-    if (a >= 1024.0) { a -= 1024.0; b += 0.866804; }
-    if (a >= 512.0) { a -= 512.0; b += 0.433402; }
-    if (a >= 256.0) { a -= 256.0; b += 0.216701; }
-    if (a >= 128.0) { a -= 128.0; b += 0.108351; }
-    if (a >= 64.0) { a -= 64.0; b += 0.554175; }
-    if (a >= 32.0) { a -= 32.0; b += 0.777088; }
-    if (a >= 16.0) { a -= 16.0; b += 0.888544; }
-    if (a >= 8.0) { a -= 8.0; b += 0.944272; }
-    if (a >= 4.0) { a -= 4.0; b += 0.472136; }
-    if (a >= 2.0) { a -= 2.0; b += 0.236068; }
-    if (a >= 1.0) { a -= 1.0; b += 0.618034; }
-    float theta = fract(b) * TAU;
+    /*
+     * fract(idx * (PHI - 1.0)), exactly.
+     *
+     * A float cannot hold that product for a large index: 24 bits of mantissa go to the integer
+     * part first, and the fraction is what remains. WebGL1 needs a ladder of 15 branches to keep
+     * the precision. WebGL2 has integer arithmetic, and an unsigned multiply wraps modulo 2^32,
+     * which is the fractional part in 32-bit fixed point. PHI - 1 scaled by 2^32 is 2654435769.
+     */
+    float theta = float(uint(idx) * 2654435769u) * (TAU / 4294967296.0);
 
     float cosphi = 1.0 - 2.0 * idx * byDots;
     float sinphi = sqrt(max(0.0, 1.0 - cosphi * cosphi));
@@ -166,7 +164,8 @@ export function rgb(hex: string): [number, number, number] {
 }
 
 export interface SpherePass {
-  draw(v: View): void;
+  /** Draws one frame. Returns false while the driver is still linking the shader. */
+  draw(v: View): boolean;
   setStyle(style: Partial<SphereStyle>): void;
   setLand(data: Uint8Array | null, width: number, height: number): void;
   setTint(data: Uint8Array | null, width: number, height: number): void;
@@ -176,7 +175,6 @@ export interface SpherePass {
 export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<SphereStyle> = {}): SpherePass {
   const style: SphereStyle = { ...DEFAULT_STYLE, ...initial };
   const prog = program(gl, VERT, FRAG);
-  const u = uniforms(gl, prog);
   const vao = gl.createVertexArray()!; // WebGL2 needs a bound array object, even with no attribute
 
   const landFormat: TextureOptions = { internal: gl.R8, format: gl.RED, type: gl.UNSIGNED_BYTE };
@@ -188,7 +186,9 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
 
   return {
     draw(v) {
-      gl.useProgram(prog);
+      if (!prog.ready()) return false;
+      const u = prog.uniforms;
+      gl.useProgram(prog.handle);
       gl.bindVertexArray(vao);
 
       gl.uniform3fv(u.uCamPos, v.position);
@@ -218,6 +218,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
 
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.bindVertexArray(null);
+      return true;
     },
     setStyle(next) { Object.assign(style, next); },
     setLand(data, width, height) {
@@ -227,7 +228,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       upload(gl, tint, tintFormat, data ?? new Uint8Array([0, 0, 0, 0]), data ? width : 1, data ? height : 1);
     },
     destroy() {
-      gl.deleteProgram(prog);
+      prog.destroy();
       gl.deleteVertexArray(vao);
       gl.deleteTexture(land);
       gl.deleteTexture(tint);

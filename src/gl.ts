@@ -2,33 +2,83 @@
  * The small part of WebGL2 that dotglobe uses. No abstraction beyond what three passes share.
  */
 
+/**
+ * Start a shader compiling. This does not ask whether the compile worked, because that question
+ * blocks the main thread until the driver answers. `ready` reports the error later.
+ */
 export function compile(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type)!;
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    const log = gl.getShaderInfoLog(shader);
-    gl.deleteShader(shader);
-    throw new Error(`dotglobe: shader failed to compile. ${log}`);
-  }
   return shader;
 }
 
-export function program(gl: WebGL2RenderingContext, vert: string, frag: string): WebGLProgram {
+/**
+ * Link a program without waiting for the driver.
+ *
+ * Reading the link status blocks the main thread until the driver finishes. This shader needs
+ * about 56 ms the first time, because ANGLE translates it and Direct3D compiles the result. Do
+ * not ask here. Ask `ready` for each frame instead, so the page can fetch a land mask while the
+ * driver works on another thread.
+ */
+export interface Program {
+  handle: WebGLProgram;
+  /**
+   * True once the driver has linked the program. Throws when the link failed.
+   *
+   * Without the parallel extension the first call blocks, which is the old behavior. With it,
+   * the call returns at once and the answer arrives on a later frame.
+   */
+  ready(): boolean;
+  /** Every uniform of the program, by name. Empty until `ready` returns true. */
+  uniforms: Record<string, WebGLUniformLocation>;
+  destroy(): void;
+}
+
+/**
+ * Link a program without waiting for the driver.
+ *
+ * Reading a compile or link status blocks the main thread until the driver finishes. This
+ * shader needs about 56 ms the first time, because ANGLE translates it and the platform then
+ * compiles the result. Ask nothing here. Ask `ready` for each frame instead, so the page can
+ * fetch a land mask while the driver works on another thread.
+ */
+export function program(gl: WebGL2RenderingContext, vert: string, frag: string): Program {
   const vs = compile(gl, gl.VERTEX_SHADER, vert);
   const fs = compile(gl, gl.FRAGMENT_SHADER, frag);
-  const p = gl.createProgram()!;
-  gl.attachShader(p, vs);
-  gl.attachShader(p, fs);
-  gl.linkProgram(p);
-  gl.deleteShader(vs);
-  gl.deleteShader(fs);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-    const log = gl.getProgramInfoLog(p);
-    gl.deleteProgram(p);
-    throw new Error(`dotglobe: program failed to link. ${log}`);
-  }
-  return p;
+  const handle = gl.createProgram()!;
+  gl.attachShader(handle, vs);
+  gl.attachShader(handle, fs);
+  gl.linkProgram(handle);
+
+  const parallel = gl.getExtension('KHR_parallel_shader_compile');
+  let linked = false;
+
+  const self: Program = {
+    handle,
+    uniforms: {},
+    ready() {
+      if (linked) return true;
+      if (parallel && !gl.getProgramParameter(handle, parallel.COMPLETION_STATUS_KHR)) return false;
+      if (!gl.getProgramParameter(handle, gl.LINK_STATUS)) {
+        // Only now, on the failure path, is it worth blocking for the two shader logs.
+        const logs = [gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs), gl.getProgramInfoLog(handle)];
+        self.destroy();
+        throw new Error(`dotglobe: program failed to link. ${logs.filter(Boolean).join(' ')}`);
+      }
+      gl.deleteShader(vs);
+      gl.deleteShader(fs);
+      self.uniforms = uniforms(gl, handle);
+      linked = true;
+      return true;
+    },
+    destroy() {
+      gl.deleteShader(vs);
+      gl.deleteShader(fs);
+      gl.deleteProgram(handle);
+    },
+  };
+  return self;
 }
 
 /** Every uniform of a program, by name. One lookup at build time beats one for each frame. */

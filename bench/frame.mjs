@@ -65,6 +65,7 @@ for (const s of SCENARIOS) {
   const result = await page.waitForFunction('window.__bench', null, { timeout: 60000 }).then((h) => h.jsonValue());
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
 
+  if (result.split) console.log(`      main thread blocked ${result.split.blocked.toFixed(1)} ms (createGlobe ${result.split.create.toFixed(1)} ms, setLand ${result.split.land.toFixed(1)} ms). Cold WebGL2 context, paid once by the page: ${result.coldContextMs.toFixed(1)} ms.`);
   if (result.skipped) {
     console.log(`skip  ${s.name.padEnd(24)} ${result.skipped}`);
     continue;

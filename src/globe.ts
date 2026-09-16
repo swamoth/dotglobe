@@ -25,6 +25,8 @@ export interface GlobeOptions {
 export interface Globe {
   readonly gl: WebGL2RenderingContext;
   readonly camera: Readonly<Camera>;
+  /** Resolves when the globe has painted its first frame. It rejects when the shader fails. */
+  readonly ready: Promise<void>;
   /** Draw one frame now. */
   render(): void;
   /** Ask for one frame on the next tick. Calling it many times still draws one frame. */
@@ -73,6 +75,12 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let lastTime = 0;
   let spin = 0; // degrees per second, left over from a drag
   let destroyed = false;
+  let pending = false; // a frame was asked for, but the shader was not linked yet
+
+  let settleReady!: () => void;
+  let failReady!: (reason: unknown) => void;
+  const ready = new Promise<void>((resolve, reject) => { settleReady = resolve; failReady = reject; });
+  ready.catch(() => {}); // a caller that ignores `ready` must not raise an unhandled rejection
 
   const clampAltitude = (a: number) => Math.min(maxAltitude, Math.max(minAltitude, a));
   const currentView = (): View => view(camera, width / height);
@@ -95,7 +103,21 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    sphere.draw(currentView());
+    let drew: boolean;
+    try {
+      drew = sphere.draw(currentView());
+    } catch (error) {
+      destroyed = true;
+      failReady(error);
+      throw error;
+    }
+    if (!drew) {
+      // The driver is still linking the shader. Come back next frame, and draw nothing yet.
+      pending = true;
+      return;
+    }
+    pending = false;
+    settleReady();
     for (const fn of listeners) fn();
   }
 
@@ -118,8 +140,9 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     }
 
     render();
-    // Schedule the next frame only while something still moves. Otherwise the loop ends here.
-    if (moving) frame = requestAnimationFrame(tick);
+    // Schedule the next frame only while something still moves, or while the shader is not
+    // linked. Otherwise the loop ends here and the globe uses no CPU.
+    if (moving || pending) frame = requestAnimationFrame(tick);
     else lastTime = 0;
   }
 
@@ -189,6 +212,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
 
   return {
     gl,
+    ready,
     get camera() { return camera; },
     render,
     invalidate,
