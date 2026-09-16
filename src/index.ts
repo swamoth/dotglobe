@@ -6,4 +6,5 @@ export * from './geo';
 export * from './globe';
 export * from './landmask';
 export * from './markers';
+export * from './rings';
 export * from './sphere';

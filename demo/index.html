@@ -44,6 +44,9 @@ const globe = createGlobe(canvas, {
 });
 
 globe.setMarkers(CITIES.map((c) => ({ ...c, size: 0.014, color: '#ff5533' })));
+globe.setRings(CITIES.slice(0, 3).map((c) => ({
+  lat: c.lat, lng: c.lng, maxRadius: 9, width: 1.2, period: 3, color: '#ff5533', opacity: 0.9,
+})));
 globe.setArcs([
   { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#7aa2f7' },
   { startLat: -23.5505, startLng: -46.6333, endLat: -1.2921, endLng: 36.8219, color: '#7aa2f7' },

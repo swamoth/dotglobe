@@ -10,6 +10,7 @@ import { view, project as projectPoint, unproject, MAX_LAT, type Camera, type Vi
 import { createSpherePass, type SphereStyle } from './sphere';
 import { createMarkerPass, type Marker, type MarkerPass } from './markers';
 import { createArcPass, type Arc, type ArcPass } from './arcs';
+import { createRingPass, type Ring, type RingPass } from './rings';
 import { unitVector } from './fibonacci';
 import { countryIndex, type CountryIndex } from './countries';
 import type { AreaGeometry } from './landmask';
@@ -43,6 +44,8 @@ export interface Globe {
   setAutoRotate(degreesPerSecond: number): void;
   setMarkers(markers: readonly Marker[]): void;
   setArcs(arcs: readonly Arc[]): void;
+  /** Pulsing rings. While any ring exists the globe keeps drawing, because they animate. */
+  setRings(rings: readonly Ring[]): void;
   /** Country shapes that `pick` tests. Pass the GeoJSON geometry of each country, in order. */
   setCountries(geometries: readonly AreaGeometry[] | null): void;
   /** Screen position of a place, in CSS pixels. Use it to pin an HTML element. */
@@ -92,6 +95,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   // that shader, which keeps its first frame shorter.
   let markerPass: MarkerPass | null = null;
   let arcPass: ArcPass | null = null;
+  let ringPass: RingPass | null = null;
   let markerList: readonly Marker[] = [];
   let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
   let countries: CountryIndex | null = null;
@@ -103,6 +107,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let spin = 0; // degrees per second, left over from a drag
   let destroyed = false;
   let pending = false; // a frame was asked for, but the shader was not linked yet
+  let clock = 0; // seconds since the first frame, for anything that animates
 
   let settleReady!: () => void;
   let failReady!: (reason: unknown) => void;
@@ -141,6 +146,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
        */
       sphereDrew = sphere.draw(v, canvas.height);
       layersDrew = (!arcPass || arcPass.draw(v, [canvas.width, canvas.height]))
+        && (!ringPass || ringPass.draw(v, clock))
         && (!markerPass || markerPass.draw(v));
     } catch (error) {
       destroyed = true;
@@ -159,7 +165,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     const dt = lastTime ? Math.min(0.1, (now - lastTime) / 1000) : 0;
     lastTime = now;
 
-    let moving = false;
+    clock += dt;
+    let moving = ringPass !== null && ringPass.count > 0; // a pulse never settles
     if (autoRotate !== 0) {
       camera.lng += autoRotate * dt;
       moving = true;
@@ -278,6 +285,11 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       arcPass.set(arcs);
       invalidate();
     },
+    setRings(rings) {
+      ringPass ??= createRingPass(gl);
+      ringPass.set(rings);
+      invalidate();
+    },
     setCountries(geometries) {
       countries = geometries && geometries.length ? countryIndex(geometries) : null;
     },
@@ -319,6 +331,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       sphere.destroy();
       markerPass?.destroy();
       arcPass?.destroy();
+      ringPass?.destroy();
       listeners.clear();
     },
   };
