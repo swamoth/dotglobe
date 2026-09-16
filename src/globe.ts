@@ -8,6 +8,9 @@
 
 import { view, project as projectPoint, unproject, MAX_LAT, type Camera, type View } from './camera';
 import { createSpherePass, type SphereStyle } from './sphere';
+import { createMarkerPass, type Marker, type MarkerPass } from './markers';
+import { unitVector } from './fibonacci';
+import { sampleAt } from './landmask';
 
 export interface GlobeOptions {
   /** Defaults to the device value, capped at 2. A higher value costs fill rate. */
@@ -36,13 +39,25 @@ export interface Globe {
   setLand(data: Uint8Array | null, width: number, height: number): void;
   setTint(data: Uint8Array | null, width: number, height: number): void;
   setAutoRotate(degreesPerSecond: number): void;
+  setMarkers(markers: readonly Marker[]): void;
+  /** The country id raster that `pick` reads. Build it with `countryIds` from landmask.ts. */
+  setCountryIds(ids: Uint16Array | null, width: number, height: number): void;
   /** Screen position of a place, in CSS pixels. Use it to pin an HTML element. */
   project(lat: number, lng: number, altitude?: number): { x: number; y: number; visible: boolean };
-  /** The place under a point, in CSS pixels, or null when the point misses the globe. */
-  pick(x: number, y: number): { lat: number; lng: number } | null;
+  /** What is under a point, in CSS pixels. Null when the point misses the globe. */
+  pick(x: number, y: number): Pick | null;
   onRender(fn: () => void): void;
   offRender(fn: () => void): void;
   destroy(): void;
+}
+
+export interface Pick {
+  lat: number;
+  lng: number;
+  /** Index of the marker under the point, or -1 when the point hit no marker. */
+  marker: number;
+  /** Value from the country id raster, or 0 for no country and for no raster. */
+  country: number;
 }
 
 const DEFAULT_CAMERA: Camera = { lat: 20, lng: 0, altitude: 1.6 };
@@ -68,6 +83,13 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   const dpr = Math.min(options.devicePixelRatio ?? (globalThis.devicePixelRatio || 1), 2);
   const sphere = createSpherePass(gl, options.style);
   const listeners = new Set<() => void>();
+
+  // The marker pass is built on the first setMarkers call. A globe with no marker never compiles
+  // that shader, which keeps its first frame shorter.
+  let markerPass: MarkerPass | null = null;
+  let markerList: readonly Marker[] = [];
+  let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
+  let ids: { data: Uint16Array; width: number; height: number } | null = null;
 
   let autoRotate = options.autoRotate ?? 0;
   let width = 1, height = 1; // CSS pixels
@@ -103,9 +125,11 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    const v = currentView();
     let drew: boolean;
     try {
-      drew = sphere.draw(currentView());
+      drew = sphere.draw(v);
+      if (markerPass && !markerPass.draw(v)) drew = false;
     } catch (error) {
       destroyed = true;
       failReady(error);
@@ -226,8 +250,45 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     setLand(data, w, h) { sphere.setLand(data, w, h); invalidate(); },
     setTint(data, w, h) { sphere.setTint(data, w, h); invalidate(); },
     setAutoRotate(speed) { autoRotate = speed; invalidate(); },
+    setMarkers(markers) {
+      markerPass ??= createMarkerPass(gl);
+      markerPass.set(markers);
+      markerList = markers;
+      // Keep the unit vector of each marker, so pick() needs no trigonometry for each marker.
+      markerPoints = new Float32Array(markers.length * 3);
+      for (let i = 0; i < markers.length; i++) {
+        const v = unitVector(markers[i].lat, markers[i].lng);
+        markerPoints[i * 3] = v[0];
+        markerPoints[i * 3 + 1] = v[1];
+        markerPoints[i * 3 + 2] = v[2];
+      }
+      invalidate();
+    },
+    setCountryIds(data, w, h) {
+      ids = data ? { data, width: w, height: h } : null;
+    },
     project(lat, lng, altitude = 0) { return projectPoint(currentView(), lat, lng, altitude, width, height); },
-    pick(x, y) { return unproject(currentView(), x, y, width, height); },
+    pick(x, y) {
+      const place = unproject(currentView(), x, y, width, height);
+      if (!place) return null;
+
+      // Nearest marker, by straight-line distance on the sphere. A marker counts as hit when the
+      // point falls inside its radius. One pass over the list, with no allocation.
+      const p = unitVector(place.lat, place.lng);
+      let marker = -1;
+      let best = Infinity;
+      for (let i = 0; i < markerList.length; i++) {
+        const dx = p[0] - markerPoints[i * 3];
+        const dy = p[1] - markerPoints[i * 3 + 1];
+        const dz = p[2] - markerPoints[i * 3 + 2];
+        const d = dx * dx + dy * dy + dz * dz;
+        const r = markerList[i].size ?? 0.01;
+        if (d < r * r && d < best) { best = d; marker = i; }
+      }
+
+      const country = ids ? sampleAt(ids.data, ids.width, ids.height, place.lat, place.lng) : 0;
+      return { lat: place.lat, lng: place.lng, marker, country };
+    },
     onRender(fn) { listeners.add(fn); },
     offRender(fn) { listeners.delete(fn); },
     destroy() {
@@ -242,6 +303,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
         canvas.removeEventListener('wheel', onWheel);
       }
       sphere.destroy();
+      markerPass?.destroy();
       listeners.clear();
     },
   };
