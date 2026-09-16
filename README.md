@@ -84,6 +84,23 @@ with the CPU throttled 4x to stand in for a mid phone.
 The React entry is a separate 0.32 kB module that imports the core, so a caller who does not use
 React pays nothing.
 
+### Against the stack it replaces
+
+Both sides bundled with the same esbuild settings and the same gzip, with React external on
+each. Measured from a NetEye checkout that has the old stack installed.
+
+| Import | Raw | Gzipped |
+|---|---|---|
+| `react-globe.gl` | 1936 kB | 544.81 kB |
+| `globe.gl` | 1919 kB | 541.98 kB |
+| `three-globe` | 1607 kB | 455.53 kB |
+| `three` | 725 kB | 185.86 kB |
+| **dotglobe** | **24.77 kB** | **9.63 kB** |
+
+react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
+app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
+an app takes close to all of it. Run `npm run bench:compare -- <path-to-app>` to repeat this.
+
 ### A note on the first frame
 
 The original target was a first frame under 50 ms. Measurement showed that the budget does not
