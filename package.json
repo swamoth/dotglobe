@@ -37,7 +37,8 @@
     "test:watch": "vitest",
     "bench:size": "node bench/size.mjs",
     "bench:frame": "node bench/frame.mjs",
-    "bench": "npm run bench:size && npm run bench:frame"
+    "bench": "npm run bench:size && npm run bench:frame",
+    "demo": "node bench/build.mjs && node bench/serve.mjs 5173"
   },
   "peerDependencies": {
     "react": ">=18"

@@ -41,10 +41,11 @@ export const DEFAULT_STYLE: SphereStyle = {
   dots: 24000,
   dotRatio: 0.27,
   diffuse: 1.5,
-  oceanDots: 0,
-  rim: 0.35,
-  glowWidth: 0.35,
-  base: '#151515',
+  // A faint ocean dot. With 0 the ocean is empty, and a view of the Pacific is a bare disc.
+  oceanDots: 0.07,
+  rim: 0.3,
+  glowWidth: 0.18,
+  base: '#121316',
   dot: '#e6e6e6',
   glow: '#c9cfd8',
 };
@@ -130,7 +131,7 @@ void main() {
   if (disc < 0.0) {
     // The ray misses. Draw the glow that sits outside the limb, then stop.
     float miss = sqrt(max(0.0, c + 1.0 - b * b)) - 1.0;
-    float g = uGlowWidth > 0.0 ? pow(max(0.0, 1.0 - miss / uGlowWidth), 3.0) : 0.0;
+    float g = uGlowWidth > 0.0 ? pow(max(0.0, 1.0 - miss / uGlowWidth), 4.0) : 0.0;
     fragColor = vec4(uGlow * g * uRim, g);
     return;
   }
@@ -151,9 +152,15 @@ void main() {
   float coverage = 1.0 - smoothstep(uDotRadius - aa, uDotRadius + aa, dist);
   float k = coverage * isLand * pow(nl, uDiffuse);
 
-  vec3 color = uBase * (0.12 + 0.88 * pow(nl, 0.5))
+  /*
+   * Shade the body linearly in nl. A curve such as pow(nl, 0.5) reaches full brightness a short
+   * way in from the limb, which paints most of the disc one flat shade and leaves a dark band at
+   * the edge. Linear limb darkening runs across the whole disc, so the sphere reads as round.
+   */
+  vec3 color = uBase * (0.25 + 0.75 * nl)
              + mix(uDot, tint.rgb, tint.a) * k
-             + pow(1.0 - nl, 4.0) * uGlow * uRim;
+             // A thin edge highlight. A wide one reads as a ring sitting inside the silhouette.
+             + pow(1.0 - nl, 10.0) * uGlow * uRim;
   fragColor = vec4(color, 1.0);
 }`;
 

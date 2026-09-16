@@ -9,10 +9,8 @@
  * The CPU throttle stands in for a mid phone. It slows the CPU only. A desktop GPU stays fast,
  * so the GPU column is a lower bound, not a phone measurement. Read the CPU column as the budget.
  */
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
 import { chromium } from 'playwright-core';
+import { serve } from './serve.mjs';
 
 /*
  * blockedMs is the budget that this library controls and that a visitor feels as a freeze.
@@ -34,22 +32,7 @@ const SCENARIOS = [
   { name: '10k markers + 1k arcs', query: '?markers=10000&arcs=1000' },
 ];
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.png': 'image/png', '.json': 'application/json' };
-
-const server = createServer(async (req, res) => {
-  const rel = normalize(decodeURIComponent(req.url.split('?')[0]));
-  const path = join(process.cwd(), rel);
-  if (!path.startsWith(process.cwd())) { res.writeHead(403).end(); return; }
-  try {
-    const body = await readFile(path);
-    res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
-    res.end(body);
-  } catch {
-    res.writeHead(404).end('not found');
-  }
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = `http://127.0.0.1:${server.address().port}`;
+const { server, base } = await serve();
 
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : NaN; };
 const p95 = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * 0.95))] : NaN; };

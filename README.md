@@ -116,6 +116,17 @@ cache that the harness cannot clear.
 - [x] Vanilla core, plus a React hook at `dotglobe/react`
 - [x] A demo page with real coastlines
 
+## See it running
+
+```
+npm install
+npm run demo      # builds, then serves the demo on http://127.0.0.1:5173
+```
+
+The demo draws real coastlines from Natural Earth, six city markers, four arcs, and HTML labels
+pinned by `project()`. Drag to turn, scroll to zoom. `window.globe` is exposed, so `globe.pick`
+and `globe.project` can be tried from the console.
+
 ## Develop
 
 ```

@@ -92,5 +92,8 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 canvas.addEventListener('pointerdown', () => globe.setAutoRotate(0));
+
+// Handy from the console: globe.pick(x, y), globe.project(lat, lng), globe.camera.
+window.globe = globe;
 </script>
 </html>
