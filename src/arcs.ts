@@ -31,6 +31,15 @@ export interface Arc {
    * lifts the ribbon clear of the surface so the occlusion test cannot drop it against itself.
    */
   altitude?: number;
+  /**
+   * Length of one dash, as a fraction of the arc. The default is 1, which draws a solid line.
+   * A dash and a gap together make the repeat, so 0.1 and 0.1 gives ten dashes over the arc.
+   */
+  dashLength?: number;
+  /** Length of the gap after a dash, as a fraction of the arc. The default is 0. */
+  dashGap?: number;
+  /** Repeats the dash pattern travels each second. 0 holds it still. The default is 0. */
+  dashSpeed?: number;
   /** A hex color. The default is white. */
   color?: string;
   /** Opacity in 0..1. The default is 1. */
@@ -56,10 +65,13 @@ uniform vec2 uViewport;
 uniform sampler2D uEnds;
 uniform sampler2D uStyle;
 uniform sampler2D uColor;
+uniform sampler2D uDash;
 uniform int uCols, uSegments;
 
 out vec4 vColor;
 out vec3 vWorld;
+out float vT;
+out vec3 vDash; // dash length, repeat length, travel
 
 const float PI = 3.141593;
 
@@ -81,11 +93,14 @@ void main() {
   vec4 ends = texelFetch(uEnds, at, 0);
   vec4 style = texelFetch(uStyle, at, 0);
   vColor = texelFetch(uColor, at, 0);
+  vec4 dash = texelFetch(uDash, at, 0);
+  vDash = vec3(dash.x, max(dash.x + dash.y, 1e-6), dash.z);
 
   int seg = gl_VertexID >> 1;
   float side = float(gl_VertexID & 1) * 2.0 - 1.0;
   float steps = float(uSegments);
   float t = float(seg) / steps;
+  vT = t;
 
   vec3 a = place(ends.x, ends.y);
   vec3 b = place(ends.z, ends.w);
@@ -125,11 +140,23 @@ const FRAG = `#version 300 es
 precision highp float;
 
 uniform vec3 uCamPos;
+uniform float uTime;
 in vec4 vColor;
 in vec3 vWorld;
+in float vT;
+in vec3 vDash;
 out vec4 fragColor;
 
 void main() {
+  /*
+   * Dashes. vDash holds the dash length, the repeat length, and how many repeats travel each
+   * second. A solid arc has a dash as long as the repeat, so this never drops a fragment.
+   */
+  if (vDash.x < vDash.y) {
+    float along = fract(vT / vDash.y - uTime * vDash.z);
+    if (along * vDash.y > vDash.x) discard;
+  }
+
   /*
    * Does the globe cover this fragment? Solve the ray from the camera against the unit sphere.
    * A hit before the fragment means the sphere is in front, thus drop the fragment. Testing each
@@ -149,9 +176,11 @@ void main() {
 
 export interface ArcPass {
   /** Draws every arc. Returns false while the driver is still linking the shader. */
-  draw(v: View, viewport: [number, number]): boolean;
+  draw(v: View, viewport: [number, number], seconds: number): boolean;
   set(arcs: readonly Arc[]): void;
   readonly count: number;
+  /** True when any arc has a dash pattern that travels, so the globe must keep drawing. */
+  readonly animated: boolean;
   destroy(): void;
 }
 
@@ -164,16 +193,20 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
   const colorFormat: TextureOptions = { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE };
   const ends = texture(gl, floatFormat);
   const style = texture(gl, floatFormat);
+  const dash = texture(gl, floatFormat);
   const color = texture(gl, colorFormat);
 
   let count = 0;
+  let animated = false;
   upload(gl, ends, floatFormat, new Float32Array(4), 1, 1);
   upload(gl, style, floatFormat, new Float32Array(4), 1, 1);
+  upload(gl, dash, floatFormat, new Float32Array([1, 0, 0, 0]), 1, 1);
   upload(gl, color, colorFormat, new Uint8Array(4), 1, 1);
 
   return {
     get count() { return count; },
-    draw(v, viewport) {
+    get animated() { return animated; },
+    draw(v, viewport, seconds) {
       if (count === 0) return true;
       if (!prog.ready()) return false;
       const u = prog.uniforms;
@@ -189,6 +222,7 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       gl.uniform2f(u.uViewport, viewport[0], viewport[1]);
       gl.uniform1i(u.uCols, COLS);
       gl.uniform1i(u.uSegments, segments);
+      gl.uniform1f(u.uTime, seconds);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, ends);
@@ -199,6 +233,9 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, color);
       gl.uniform1i(u.uColor, 2);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, dash);
+      gl.uniform1i(u.uDash, 3);
 
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (segments + 1) * 2, count);
       gl.bindVertexArray(null);
@@ -211,6 +248,8 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       const cells = COLS * rows;
       const e = new Float32Array(cells * 4);
       const s = new Float32Array(cells * 4);
+      const dashData = new Float32Array(cells * 4);
+      animated = false;
       const c = new Uint8Array(cells * 4);
       for (let i = 0; i < count; i++) {
         const arc = arcs[i];
@@ -224,6 +263,10 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
         ));
         s[i * 4 + 1] = arc.stroke ?? 2;
         s[i * 4 + 2] = arc.altitude ?? 0.002;
+        dashData[i * 4] = arc.dashLength ?? 1;
+        dashData[i * 4 + 1] = arc.dashGap ?? 0;
+        dashData[i * 4 + 2] = arc.dashSpeed ?? 0;
+        if ((arc.dashSpeed ?? 0) !== 0 && (arc.dashGap ?? 0) > 0) animated = true;
         const [r, g, b] = arc.color ? rgb(arc.color) : [1, 1, 1];
         c[i * 4] = r * 255;
         c[i * 4 + 1] = g * 255;
@@ -232,6 +275,7 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       }
       upload(gl, ends, floatFormat, e, COLS, rows);
       upload(gl, style, floatFormat, s, COLS, rows);
+      upload(gl, dash, floatFormat, dashData, COLS, rows);
       upload(gl, color, colorFormat, c, COLS, rows);
     },
     destroy() {
@@ -239,6 +283,7 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       gl.deleteVertexArray(vao);
       gl.deleteTexture(ends);
       gl.deleteTexture(style);
+      gl.deleteTexture(dash);
       gl.deleteTexture(color);
     },
   };

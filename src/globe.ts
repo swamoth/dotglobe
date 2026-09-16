@@ -148,8 +148,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
        * visitor waits for. A marker or an arc appears one frame after its shader is ready.
        */
       sphereDrew = sphere.draw(v, canvas.height);
-      layersDrew = (!pathPass || pathPass.draw(v, [canvas.width, canvas.height]))
-        && (!arcPass || arcPass.draw(v, [canvas.width, canvas.height]))
+      layersDrew = (!pathPass || pathPass.draw(v, [canvas.width, canvas.height], clock))
+        && (!arcPass || arcPass.draw(v, [canvas.width, canvas.height], clock))
         && (!ringPass || ringPass.draw(v, clock))
         && (!markerPass || markerPass.draw(v));
     } catch (error) {
@@ -170,7 +170,11 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     lastTime = now;
 
     clock += dt;
-    let moving = ringPass !== null && ringPass.count > 0; // a pulse never settles
+    // Three things keep frames coming on their own: a pulse, a travelling dash, and the two
+    // camera motions below. Each one ends, and then the loop stops.
+    let moving = (ringPass !== null && ringPass.count > 0)
+      || (arcPass !== null && arcPass.animated)
+      || (pathPass !== null && pathPass.animated);
     if (autoRotate !== 0) {
       camera.lng += autoRotate * dt;
       moving = true;
