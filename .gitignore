@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 bench/results/
+
+# Local agent tooling, not part of the library.
+.claude/
