@@ -129,22 +129,25 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     const v = currentView();
-    let drew: boolean;
+    let sphereDrew: boolean;
+    let layersDrew: boolean;
     try {
-      drew = sphere.draw(v);
-      if (arcPass && !arcPass.draw(v, [canvas.width, canvas.height])) drew = false;
-      if (markerPass && !markerPass.draw(v)) drew = false;
+      /*
+       * Each pass draws as soon as its own shader is linked. The globe does not wait for the
+       * whole set, because the driver compiles each shader separately and the sphere is what a
+       * visitor waits for. A marker or an arc appears one frame after its shader is ready.
+       */
+      sphereDrew = sphere.draw(v);
+      layersDrew = (!arcPass || arcPass.draw(v, [canvas.width, canvas.height]))
+        && (!markerPass || markerPass.draw(v));
     } catch (error) {
       destroyed = true;
       failReady(error);
       throw error;
     }
-    if (!drew) {
-      // The driver is still linking the shader. Come back next frame, and draw nothing yet.
-      pending = true;
-      return;
-    }
-    pending = false;
+    // Keep asking for frames until every pass has drawn at least one.
+    pending = !sphereDrew || !layersDrew;
+    if (!sphereDrew) return;
     settleReady();
     for (const fn of listeners) fn();
   }

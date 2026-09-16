@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dotglobe</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0b0c; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9aa3b0; }
+  #stage { position: absolute; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #hud { position: absolute; left: 16px; top: 16px; pointer-events: none; }
+  #hud b { color: #e6e6e6; font-weight: 500; letter-spacing: .04em; }
+  #readout { margin-top: 6px; }
+  .pin { position: absolute; transform: translate(-50%, -100%); pointer-events: none; transition: opacity .15s; }
+  .pin span { display: block; padding: 2px 6px; border: 1px solid #2a2f38; border-radius: 3px; background: #14161a; color: #e6e6e6; white-space: nowrap; }
+  .pin.away { opacity: 0; }
+</style>
+<div id="stage">
+  <canvas id="globe"></canvas>
+  <div id="hud"><b>dotglobe</b><div id="readout">loading coastlines</div></div>
+</div>
+<script type="module">
+import { createGlobe, landMask, countryIds } from '../dist/dotglobe.js';
+import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
+
+const COLS = 2048, ROWS = 1024;
+const canvas = document.getElementById('globe');
+const readout = document.getElementById('readout');
+const stage = document.getElementById('stage');
+
+const CITIES = [
+  { name: 'London', lat: 51.5074, lng: -0.1278 },
+  { name: 'Tokyo', lat: 35.6762, lng: 139.6503 },
+  { name: 'Sao Paulo', lat: -23.5505, lng: -46.6333 },
+  { name: 'Nairobi', lat: -1.2921, lng: 36.8219 },
+  { name: 'Sydney', lat: -33.8688, lng: 151.2093 },
+  { name: 'Bengaluru', lat: 12.9716, lng: 77.5946 },
+];
+
+const globe = createGlobe(canvas, {
+  camera: { lat: 20, lng: 12, altitude: 1.7 },
+  autoRotate: 4,
+  style: { dots: 26000, dotRatio: 0.28 },
+});
+
+globe.setMarkers(CITIES.map((c) => ({ ...c, size: 0.014, color: '#ff5533' })));
+globe.setArcs([
+  { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#7aa2f7' },
+  { startLat: -23.5505, startLng: -46.6333, endLat: -1.2921, endLng: 36.8219, color: '#7aa2f7' },
+  { startLat: 12.9716, startLng: 77.5946, endLat: -33.8688, endLng: 151.2093, color: '#7aa2f7' },
+  { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#9ece6a' },
+]);
+
+// One HTML element for each city, moved by project() on every frame.
+const pins = CITIES.map((c) => {
+  const el = document.createElement('div');
+  el.className = 'pin';
+  el.innerHTML = `<span>${c.name}</span>`;
+  stage.append(el);
+  return { city: c, el };
+});
+
+globe.onRender(() => {
+  for (const { city, el } of pins) {
+    const at = globe.project(city.lat, city.lng, 0.02);
+    el.style.left = `${at.x}px`;
+    el.style.top = `${at.y}px`;
+    el.classList.toggle('away', !at.visible);
+  }
+});
+
+// Coastlines. The mask is built in the browser from Natural Earth polygons.
+const topo = await fetch('./countries-110m.json').then((r) => r.json());
+const countries = feature(topo, topo.objects.countries).features
+  .filter((f) => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
+const names = countries.map((f) => f.properties?.name ?? String(f.id));
+
+const started = performance.now();
+globe.setLand(landMask(countries.map((f) => f.geometry), COLS, ROWS), COLS, ROWS);
+globe.setCountryIds(countryIds(countries.map((f) => f.geometry), 1024, 512), 1024, 512);
+const maskMs = performance.now() - started;
+
+await globe.ready;
+readout.textContent = `${countries.length} countries, mask built in ${maskMs.toFixed(0)} ms. Drag to turn, scroll to zoom.`;
+
+canvas.addEventListener('pointermove', (e) => {
+  const hit = globe.pick(e.offsetX, e.offsetY);
+  if (!hit) { readout.textContent = 'off the globe'; return; }
+  const place = hit.country ? names[hit.country - 1] : 'ocean';
+  const marker = hit.marker >= 0 ? ` — ${CITIES[hit.marker].name}` : '';
+  readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}`;
+});
+
+canvas.addEventListener('pointerdown', () => globe.setAutoRotate(0));
+</script>
+</html>

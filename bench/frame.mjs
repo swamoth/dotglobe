@@ -14,8 +14,19 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { chromium } from 'playwright-core';
 
-const BUDGET = { frameMs: 4, firstFrameMs: 50, idleFrames: 0 };
+/*
+ * blockedMs is the budget that this library controls and that a visitor feels as a freeze.
+ * It is stable across runs, within about 1 ms.
+ *
+ * firstFrameMs is reported but gated loosely. It is mostly the graphics driver translating and
+ * compiling the shader, and the driver keeps its own cache that this harness cannot clear. A
+ * fresh browser for each run was not enough: with one warm-up discarded the scenarios became
+ * comparable, but the absolute value still belongs to the machine more than to the code. Gate it
+ * only wide enough to catch a real regression.
+ */
+const BUDGET = { frameMs: 4, blockedMs: 20, firstFrameMs: 120, idleFrames: 0 };
 const THROTTLE = Number(process.env.BENCH_CPU_THROTTLE ?? 4); // Lighthouse uses 4x for a mid phone
+const REPEATS = Number(process.env.BENCH_REPEATS ?? 5); // first frame is noisy, so take a median
 const SCENARIOS = [
   { name: 'sphere only', query: '' },
   { name: '10k markers', query: '?markers=10000' },
@@ -58,36 +69,59 @@ try {
   process.exit(2);
 }
 
+async function runOnce(query) {
+  const browser = await launch(); // a cold shader cache for each run
+  try {
+    const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
+    const cdp = await page.context().newCDPSession(page);
+    await page.goto(`${base}/bench/fixture.html${query}`, { waitUntil: 'load' });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
+    return await page.waitForFunction('window.__bench', null, { timeout: 60000 }).then((h) => h.jsonValue());
+  } finally {
+    await browser.close();
+  }
+}
+
+// Warm the driver once and throw the result away, so no scenario pays for the ones before it.
+await runOnce('');
+
 let failed = false;
 const rows = [];
 
 for (const s of SCENARIOS) {
-  const browser = await launch(); // a cold shader cache for each scenario
-  const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
-  const cdp = await page.context().newCDPSession(page);
-
-  await page.goto(`${base}/bench/fixture.html${s.query}`, { waitUntil: 'load' });
-  await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
-  const result = await page.waitForFunction('window.__bench', null, { timeout: 60000 }).then((h) => h.jsonValue());
-  await browser.close();
-
-  if (result.skipped) {
-    console.log(`skip  ${s.name.padEnd(24)} ${result.skipped}`);
-    continue;
+  const runs = [];
+  for (let i = 0; i < REPEATS; i++) {
+    const result = await runOnce(s.query);
+    if (result.skipped) {
+      console.log(`skip  ${s.name.padEnd(24)} ${result.skipped}`);
+      break;
+    }
+    runs.push(result);
   }
-  console.log(`      ${s.name}: main thread blocked ${result.split.blocked.toFixed(1)} ms (createGlobe ${result.split.create.toFixed(1)} ms, setLand ${result.split.land.toFixed(1)} ms). Cold WebGL2 context, paid once by the page: ${result.coldContextMs.toFixed(1)} ms.`);
+  if (!runs.length) continue;
 
-  const cpu = median(result.cpu);
-  const over = cpu > BUDGET.frameMs || result.firstFrameMs > BUDGET.firstFrameMs || result.idleFrames > BUDGET.idleFrames || result.lit === 0;
+  const first = median(runs.map((r) => r.firstFrameMs));
+  const blocked = median(runs.map((r) => r.split.blocked));
+  const cpu = median(runs.flatMap((r) => r.cpu));
+  const gpu = median(runs.flatMap((r) => r.gpu));
+  const idle = Math.max(...runs.map((r) => r.idleFrames));
+  const lit = Math.min(...runs.map((r) => r.lit));
+  const firstRange = `${Math.min(...runs.map((r) => r.firstFrameMs)).toFixed(0)} to ${Math.max(...runs.map((r) => r.firstFrameMs)).toFixed(0)} ms`;
+
+  console.log(`      ${s.name}: main thread blocked ${blocked.toFixed(1)} ms, first frame over ${REPEATS} cold runs ${firstRange}.`);
+
+  const over = cpu > BUDGET.frameMs || blocked > BUDGET.blockedMs || first > BUDGET.firstFrameMs
+    || idle > BUDGET.idleFrames || lit === 0;
   if (over) failed = true;
-  rows.push({ name: s.name, cpu, cpuP95: p95(result.cpu), gpu: median(result.gpu), first: result.firstFrameMs, idle: result.idleFrames, lit: result.lit, over });
+  rows.push({ name: s.name, cpu, cpuP95: p95(runs.flatMap((r) => r.cpu)), gpu, blocked, first, idle, lit, over });
 }
 
 if (rows.length) {
-  console.log(`\nCPU throttle ${THROTTLE}x. Budget: frame ${BUDGET.frameMs} ms, first frame ${BUDGET.firstFrameMs} ms, idle ${BUDGET.idleFrames} frames.\n`);
-  console.log('scenario                  cpu med   cpu p95   gpu med   first     idle    lit');
+  console.log(`\nCPU throttle ${THROTTLE}x, median of ${REPEATS} runs, one warm-up discarded.`);
+  console.log(`Budget: frame ${BUDGET.frameMs} ms, blocked ${BUDGET.blockedMs} ms, idle ${BUDGET.idleFrames} frames. First frame is reported, and gated loosely at ${BUDGET.firstFrameMs} ms.\n`);
+  console.log('scenario                  cpu med   cpu p95   gpu med   blocked     first    idle    lit');
   for (const r of rows) {
-    console.log(`${(r.over ? 'FAIL ' : 'ok   ') + r.name.padEnd(20)} ${ms(r.cpu).padStart(9)} ${ms(r.cpuP95).padStart(9)} ${ms(r.gpu).padStart(9)} ${ms(r.first).padStart(9)} ${String(r.idle).padStart(6)} ${String(r.lit).padStart(6)}`);
+    console.log(`${(r.over ? 'FAIL ' : 'ok   ') + r.name.padEnd(20)} ${ms(r.cpu).padStart(9)} ${ms(r.cpuP95).padStart(9)} ${ms(r.gpu).padStart(9)} ${ms(r.blocked).padStart(9)} ${ms(r.first).padStart(9)} ${String(r.idle).padStart(6)} ${String(r.lit).padStart(6)}`);
   }
 }
 

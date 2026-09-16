@@ -4,7 +4,20 @@ import { existsSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-const entries = [['src/index.ts', 'dist/dotglobe.js'], ['src/react.tsx', 'dist/react.js']];
+const entries = [['src/index.ts', 'dist/dotglobe.js'], ['src/react.ts', 'dist/react.js']];
+
+/**
+ * Keep the core out of the React bundle. Without this the React entry inlines every core module,
+ * and an app that imports both ships the engine two times.
+ */
+const useCoreBundle = {
+  name: 'use-core-bundle',
+  setup(build) {
+    build.onResolve({ filter: /^\.\/[a-z]+$/ }, (args) => (
+      args.kind === 'entry-point' ? null : { path: './dotglobe.js', external: true }
+    ));
+  },
+};
 
 export async function bundle({ metafile = false } = {}) {
   rmSync('dist', { recursive: true, force: true });
@@ -20,6 +33,7 @@ export async function bundle({ metafile = false } = {}) {
       minify: true,
       legalComments: 'none',
       external: ['react', 'react/jsx-runtime'],
+      plugins: entry === 'src/react.ts' ? [useCoreBundle] : [],
       metafile,
     });
   }
