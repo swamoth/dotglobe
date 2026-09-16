@@ -1,5 +1,6 @@
 export * from './arcs';
 export * from './camera';
+export * from './countries';
 export * from './fibonacci';
 export * from './geo';
 export * from './globe';

@@ -11,7 +11,8 @@ import { createSpherePass, type SphereStyle } from './sphere';
 import { createMarkerPass, type Marker, type MarkerPass } from './markers';
 import { createArcPass, type Arc, type ArcPass } from './arcs';
 import { unitVector } from './fibonacci';
-import { sampleAt } from './landmask';
+import { countryIndex, type CountryIndex } from './countries';
+import type { AreaGeometry } from './landmask';
 
 export interface GlobeOptions {
   /** Defaults to the device value, capped at 2. A higher value costs fill rate. */
@@ -42,8 +43,8 @@ export interface Globe {
   setAutoRotate(degreesPerSecond: number): void;
   setMarkers(markers: readonly Marker[]): void;
   setArcs(arcs: readonly Arc[]): void;
-  /** The country id raster that `pick` reads. Build it with `countryIds` from landmask.ts. */
-  setCountryIds(ids: Uint16Array | null, width: number, height: number): void;
+  /** Country shapes that `pick` tests. Pass the GeoJSON geometry of each country, in order. */
+  setCountries(geometries: readonly AreaGeometry[] | null): void;
   /** Screen position of a place, in CSS pixels. Use it to pin an HTML element. */
   project(lat: number, lng: number, altitude?: number): { x: number; y: number; visible: boolean };
   /** What is under a point, in CSS pixels. Null when the point misses the globe. */
@@ -58,7 +59,7 @@ export interface Pick {
   lng: number;
   /** Index of the marker under the point, or -1 when the point hit no marker. */
   marker: number;
-  /** Value from the country id raster, or 0 for no country and for no raster. */
+  /** Index into the array given to `setCountries`, or -1 for none and when none were set. */
   country: number;
 }
 
@@ -80,7 +81,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   const gl = context;
 
   const camera: Camera = { ...DEFAULT_CAMERA, ...options.camera };
-  const minAltitude = options.minAltitude ?? 0.15;
+  // The lattice tops out at MAX_DOTS, so below this the dots spread out faster than they shrink.
+  const minAltitude = options.minAltitude ?? 0.35;
   const maxAltitude = options.maxAltitude ?? 4;
   const dpr = Math.min(options.devicePixelRatio ?? (globalThis.devicePixelRatio || 1), 2);
   const sphere = createSpherePass(gl, options.style);
@@ -92,7 +94,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let arcPass: ArcPass | null = null;
   let markerList: readonly Marker[] = [];
   let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
-  let ids: { data: Uint16Array; width: number; height: number } | null = null;
+  let countries: CountryIndex | null = null;
 
   let autoRotate = options.autoRotate ?? 0;
   let width = 1, height = 1; // CSS pixels
@@ -137,7 +139,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
        * whole set, because the driver compiles each shader separately and the sphere is what a
        * visitor waits for. A marker or an arc appears one frame after its shader is ready.
        */
-      sphereDrew = sphere.draw(v);
+      sphereDrew = sphere.draw(v, canvas.height);
       layersDrew = (!arcPass || arcPass.draw(v, [canvas.width, canvas.height]))
         && (!markerPass || markerPass.draw(v));
     } catch (error) {
@@ -276,8 +278,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       arcPass.set(arcs);
       invalidate();
     },
-    setCountryIds(data, w, h) {
-      ids = data ? { data, width: w, height: h } : null;
+    setCountries(geometries) {
+      countries = geometries && geometries.length ? countryIndex(geometries) : null;
     },
     project(lat, lng, altitude = 0) { return projectPoint(currentView(), lat, lng, altitude, width, height); },
     pick(x, y) {
@@ -298,7 +300,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
         if (d < r * r && d < best) { best = d; marker = i; }
       }
 
-      const country = ids ? sampleAt(ids.data, ids.width, ids.height, place.lat, place.lng) : 0;
+      const country = countries ? countries.locate(place.lat, place.lng) : -1;
       return { lat: place.lat, lng: place.lng, marker, country };
     },
     onRender(fn) { listeners.add(fn); },

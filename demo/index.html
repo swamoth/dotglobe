@@ -20,7 +20,7 @@
   <div id="hud"><b>dotglobe</b><div id="readout">loading coastlines</div></div>
 </div>
 <script type="module">
-import { createGlobe, landMask, countryIds } from '../dist/dotglobe.js';
+import { createGlobe, landMask } from '../dist/dotglobe.js';
 import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 
 const COLS = 2048, ROWS = 1024;
@@ -63,9 +63,14 @@ const pins = CITIES.map((c) => {
 globe.onRender(() => {
   for (const { city, el } of pins) {
     const at = globe.project(city.lat, city.lng, 0.02);
+    // A point behind the camera has no screen position, and a point far outside the canvas has a
+    // large one. Moving an element there would stretch the page and raise scrollbars, so hide it.
+    const onScreen = at.visible && Number.isFinite(at.x)
+      && at.x > -200 && at.y > -200 && at.x < window.innerWidth + 200 && at.y < window.innerHeight + 200;
+    el.style.display = onScreen ? '' : 'none';
+    if (!onScreen) continue;
     el.style.left = `${at.x}px`;
     el.style.top = `${at.y}px`;
-    el.classList.toggle('away', !at.visible);
   }
 });
 
@@ -77,7 +82,7 @@ const names = countries.map((f) => f.properties?.name ?? String(f.id));
 
 const started = performance.now();
 globe.setLand(landMask(countries.map((f) => f.geometry), COLS, ROWS), COLS, ROWS);
-globe.setCountryIds(countryIds(countries.map((f) => f.geometry), 1024, 512), 1024, 512);
+globe.setCountries(countries.map((f) => f.geometry));
 const maskMs = performance.now() - started;
 
 await globe.ready;
@@ -86,7 +91,7 @@ readout.textContent = `${countries.length} countries, mask built in ${maskMs.toF
 canvas.addEventListener('pointermove', (e) => {
   const hit = globe.pick(e.offsetX, e.offsetY);
   if (!hit) { readout.textContent = 'off the globe'; return; }
-  const place = hit.country ? names[hit.country - 1] : 'ocean';
+  const place = hit.country >= 0 ? names[hit.country] : 'ocean';
   const marker = hit.marker >= 0 ? ` — ${CITIES[hit.marker].name}` : '';
   readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}`;
 });

@@ -73,7 +73,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 9.44 kB |
+| Core bundle, gzipped | under 20 kB | 10.1 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -83,6 +83,21 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 The React entry is a separate 0.32 kB module that imports the core, so a caller who does not use
 React pays nothing.
+
+### Dot density follows the zoom
+
+The lattice is fixed in world space, so a dot grows on screen as the camera moves in. Left
+alone it reaches 31 pixels at the closest zoom and the globe reads as a field of blobs.
+
+`dotPitch` sets the distance between two dots in CSS pixels, and the lattice grows with the
+zoom to hold it. A coastline gains detail as you move in, rather than losing it. Set `dotPitch`
+to 0 to fix the lattice at `dots` instead.
+
+The lattice has a ceiling. Measured on this shader, it resolves cleanly to about 280000 points,
+thins at 300000, and returns nothing past 330000, because float32 can no longer tell a nearest
+point from its neighbor. `MAX_DOTS` is 262144, under that edge. Past the altitude where the
+ceiling binds, the dots spread apart, and their diameter is capped at `dotPitch` so they stay
+dots. `minAltitude` defaults to 0.35 to keep the camera inside the range that still reads well.
 
 ### Against the stack it replaces
 
@@ -95,7 +110,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **24.77 kB** | **9.63 kB** |
+| **dotglobe** | **25.9 kB** | **10.1 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so

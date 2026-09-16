@@ -13,14 +13,23 @@ import { latticeSpacing } from './fibonacci';
 import type { View } from './camera';
 
 /**
- * Upper bound on the lattice. The shader resolves an index with 32-bit integer math, so the old
- * 2^15 ceiling of the WebGL1 method is gone. What binds now is the screen: past about 200000
- * dots the spacing falls below one pixel and the dots merge into a solid shade.
+ * Upper bound on the lattice.
+ *
+ * The 32-bit index math lifted the 2^15 ceiling of the WebGL1 method, but float32 sets a new one.
+ * Measured on this shader: the lattice resolves cleanly to about 280000 points, thins at 300000,
+ * and returns nothing at all past 330000, because a nearest point can no longer be told from its
+ * neighbor. This value keeps a margin under that.
  */
-export const MAX_DOTS = 200000;
+export const MAX_DOTS = 262144;
 
 export interface SphereStyle {
-  /** Lattice points on the sphere. More points means smaller dots. */
+  /**
+   * Target distance between two neighboring dots, in CSS pixels. The lattice grows as the camera
+   * moves in, so a dot keeps its size on screen and a coastline gains detail. Set it to 0 to fix
+   * the lattice at `dots` instead.
+   */
+  dotPitch: number;
+  /** Lattice points on the sphere, when `dotPitch` is 0. More points means smaller dots. */
   dots: number;
   /** Dot radius as a fraction of the lattice spacing. */
   dotRatio: number;
@@ -38,6 +47,7 @@ export interface SphereStyle {
 }
 
 export const DEFAULT_STYLE: SphereStyle = {
+  dotPitch: 7,
   dots: 24000,
   dotRatio: 0.27,
   diffuse: 1.5,
@@ -112,7 +122,15 @@ vec3 nearestLattice(vec3 p, out float dist) {
      */
     float theta = float(uint(idx) * 2654435769u) * (TAU / 4294967296.0);
 
-    float cosphi = 1.0 - 2.0 * idx * byDots;
+    /*
+     * cosphi, without the cancellation.
+     *
+     * Written as 1.0 - 2.0 * idx / n, the quotient approaches 1 near the equator and the
+     * subtraction throws away most of the mantissa, so two neighboring indices land on the same
+     * value and the lattice dissolves. uDots and idx are both whole numbers below 2^24, thus
+     * uDots - 2.0 * idx is exact, and the single divide that follows keeps full precision.
+     */
+    float cosphi = (uDots - 2.0 * idx) * byDots;
     float sinphi = sqrt(max(0.0, 1.0 - cosphi * cosphi));
     vec3 q = vec3(cos(theta) * sinphi, sin(theta) * sinphi, cosphi);
     float d = length(p - q);
@@ -170,9 +188,28 @@ export function rgb(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+/**
+ * Lattice points needed to hold `pitch` pixels between dots, at this view and canvas height.
+ *
+ * The depth that matters is the distance to the surface the camera looks at, which is the
+ * distance to the center less the radius. Dividing by the distance to the center instead
+ * understates how large a dot grows: the error is small when the camera is far, and it reaches
+ * about 8x at the closest zoom, where a dot swells to 35 pixels.
+ */
+export function pixelsPerUnit(v: View, heightPx: number): number {
+  const distance = Math.hypot(v.position[0], v.position[1], v.position[2]);
+  const depth = Math.max(1e-3, distance - 1);
+  return (v.focal * heightPx * 0.5) / depth;
+}
+
+export function dotsForPitch(v: View, heightPx: number, pitch: number): number {
+  const px = pixelsPerUnit(v, heightPx);
+  return (4 * Math.PI * px * px) / (pitch * pitch);
+}
+
 export interface SpherePass {
   /** Draws one frame. Returns false while the driver is still linking the shader. */
-  draw(v: View): boolean;
+  draw(v: View, heightPx: number): boolean;
   setStyle(style: Partial<SphereStyle>): void;
   setLand(data: Uint8Array | null, width: number, height: number): void;
   setTint(data: Uint8Array | null, width: number, height: number): void;
@@ -192,7 +229,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
   upload(gl, tint, tintFormat, new Uint8Array([0, 0, 0, 0]), 1, 1);
 
   return {
-    draw(v) {
+    draw(v, heightPx) {
       if (!prog.ready()) return false;
       const u = prog.uniforms;
       gl.useProgram(prog.handle);
@@ -205,9 +242,26 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.uniform1f(u.uFocal, v.focal);
       gl.uniform1f(u.uAspect, v.aspect);
 
-      const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(style.dots)));
+      /*
+       * Grow the lattice as the camera moves in, so a dot keeps its size on screen. The lattice
+       * is fixed in world space, thus without this a dot at the closest zoom covers 40 pixels and
+       * the globe reads as a field of blobs. The count is quadratic in the zoom, which is why the
+       * shader needed 32-bit index math: the old ceiling of 32768 dots is passed at a mild zoom.
+       */
+      const wanted = style.dotPitch > 0 ? dotsForPitch(v, heightPx, style.dotPitch) : style.dots;
+      const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
+      let radius = style.dotRatio * latticeSpacing(dots);
+      if (style.dotPitch > 0) {
+        /*
+         * Past the lattice ceiling the camera keeps moving in and the spacing keeps growing, so a
+         * dot would swell into a blob. Cap its diameter at the target pitch instead. The dots then
+         * spread apart into a sparse grid, which still reads as a dot matrix.
+         */
+        const maxRadius = (style.dotPitch * 0.5) / pixelsPerUnit(v, heightPx);
+        radius = Math.min(radius, maxRadius);
+      }
       gl.uniform1f(u.uDots, dots);
-      gl.uniform1f(u.uDotRadius, style.dotRatio * latticeSpacing(dots));
+      gl.uniform1f(u.uDotRadius, radius);
       gl.uniform1f(u.uDiffuse, style.diffuse);
       gl.uniform1f(u.uOceanDots, style.oceanDots);
       gl.uniform1f(u.uRim, style.rim);
