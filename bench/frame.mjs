@@ -70,16 +70,16 @@ for (const s of SCENARIOS) {
     continue;
   }
   const cpu = median(result.cpu);
-  const over = cpu > BUDGET.frameMs || result.firstFrameMs > BUDGET.firstFrameMs || result.idleFrames > BUDGET.idleFrames;
+  const over = cpu > BUDGET.frameMs || result.firstFrameMs > BUDGET.firstFrameMs || result.idleFrames > BUDGET.idleFrames || result.lit === 0;
   if (over) failed = true;
-  rows.push({ name: s.name, cpu, cpuP95: p95(result.cpu), gpu: median(result.gpu), first: result.firstFrameMs, idle: result.idleFrames, over });
+  rows.push({ name: s.name, cpu, cpuP95: p95(result.cpu), gpu: median(result.gpu), first: result.firstFrameMs, idle: result.idleFrames, lit: result.lit, over });
 }
 
 if (rows.length) {
   console.log(`\nCPU throttle ${THROTTLE}x. Budget: frame ${BUDGET.frameMs} ms, first frame ${BUDGET.firstFrameMs} ms, idle ${BUDGET.idleFrames} frames.\n`);
-  console.log('scenario                  cpu med   cpu p95   gpu med   first     idle');
+  console.log('scenario                  cpu med   cpu p95   gpu med   first     idle    lit');
   for (const r of rows) {
-    console.log(`${(r.over ? 'FAIL ' : 'ok   ') + r.name.padEnd(20)} ${ms(r.cpu).padStart(9)} ${ms(r.cpuP95).padStart(9)} ${ms(r.gpu).padStart(9)} ${ms(r.first).padStart(9)} ${String(r.idle).padStart(6)}`);
+    console.log(`${(r.over ? 'FAIL ' : 'ok   ') + r.name.padEnd(20)} ${ms(r.cpu).padStart(9)} ${ms(r.cpuP95).padStart(9)} ${ms(r.gpu).padStart(9)} ${ms(r.first).padStart(9)} ${String(r.idle).padStart(6)} ${String(r.lit).padStart(6)}`);
   }
 }
 

@@ -1,12 +1,12 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>dotglobe benchmark</title>
-<style>html,body{margin:0;height:100%;background:#000}canvas{display:block;width:100%;height:100%}</style>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style>
 <canvas id="c"></canvas>
 <script type="module">
 /*
- * The page under measurement. It reports one result object on window.__bench.
- * The runner reads that object. Nothing is printed here.
+ * The page under measurement. It reports one result object on window.__bench, and prints
+ * nothing. The runner in bench/frame.mjs reads that object.
  */
 const params = new URLSearchParams(location.search);
 const markers = Number(params.get('markers') ?? 0);
@@ -28,57 +28,82 @@ if (typeof mod.createGlobe !== 'function') {
 } else {
   const canvas = document.getElementById('c');
   const dpr = 2;
-  canvas.width = Math.round(canvas.clientWidth * dpr);
-  canvas.height = Math.round(canvas.clientHeight * dpr);
 
-  const start = performance.now();
-  const globe = mod.createGlobe(canvas, {
-    devicePixelRatio: dpr,
-    markers: Array.from({ length: markers }, (_, i) => ({
-      lat: (i * 73) % 180 - 90, lng: (i * 131) % 360 - 180, size: 0.01,
-    })),
-    arcs: Array.from({ length: arcs }, (_, i) => ({
-      startLat: (i * 37) % 180 - 90, startLng: (i * 91) % 360 - 180,
-      endLat: (i * 53) % 180 - 90, endLng: (i * 17) % 360 - 180,
-    })),
-  });
-
-  globe.render();
-  const firstFrameMs = performance.now() - start;
-
-  // GPU time, when the extension is there. A CPU timer cannot see the GPU.
-  const gl = globe.gl;
-  const ext = gl && gl.getExtension('EXT_disjoint_timer_query_webgl2');
-
-  const cpu = [], gpu = [];
-  for (let i = 0; i < frames; i++) {
-    globe.rotate(i * 0.01);
-    const query = ext ? gl.createQuery() : null;
-    if (query) gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
-    const t0 = performance.now();
-    globe.render();
-    cpu.push(performance.now() - t0);
-    if (query) { gl.endQuery(ext.TIME_ELAPSED_EXT); gpu.push(query); }
-    await new Promise(requestAnimationFrame);
-  }
-
-  let gpuMs = [];
-  if (ext) {
-    await new Promise((r) => setTimeout(r, 200));
-    for (const q of gpu) {
-      if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) gpuMs.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
-      gl.deleteQuery(q);
+  // A land mask with the same shape of cost as the real one: a big texture, about a third land.
+  const COLS = 2048, ROWS = 1024;
+  const land = new Uint8Array(COLS * ROWS);
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const u = x / COLS, v = y / ROWS;
+      const n = Math.sin(u * 22) + Math.cos(v * 17) + Math.sin((u + v) * 13);
+      land[y * COLS + x] = n > 0.4 ? 255 : 0;
     }
   }
 
-  // Idle: with no input and no animation, the globe must schedule no frame at all.
-  let idleFrames = 0;
-  const count = () => { idleFrames++; };
-  globe.onRender?.(count);
-  await new Promise((r) => setTimeout(r, 1000));
-  globe.offRender?.(count);
+  const start = performance.now();
+  const globe = mod.createGlobe(canvas, { devicePixelRatio: dpr, interactive: false });
+  globe.setLand(land, COLS, ROWS);
 
-  done({ firstFrameMs, cpu, gpu: gpuMs, idleFrames, markers, arcs });
-  globe.destroy?.();
+  if (markers > 0 && typeof globe.setMarkers !== 'function') { done({ skipped: 'markers are not implemented yet' }); }
+  else if (arcs > 0 && typeof globe.setArcs !== 'function') { done({ skipped: 'arcs are not implemented yet' }); }
+  else {
+    if (markers > 0) {
+      globe.setMarkers(Array.from({ length: markers }, (_, i) => ({
+        lat: ((i * 73) % 180) - 90, lng: ((i * 131) % 360) - 180, size: 0.008,
+      })));
+    }
+    if (arcs > 0) {
+      globe.setArcs(Array.from({ length: arcs }, (_, i) => ({
+        startLat: ((i * 37) % 180) - 90, startLng: ((i * 91) % 360) - 180,
+        endLat: ((i * 53) % 180) - 90, endLng: ((i * 17) % 360) - 180,
+      })));
+    }
+
+    globe.render();
+    const firstFrameMs = performance.now() - start;
+
+    const gl = globe.gl;
+
+    // Smoke test: a frame that draws nothing would still report a fast frame time.
+    const px = new Uint8Array(4 * 64 * 64);
+    gl.readPixels(Math.round(canvas.width / 2) - 32, Math.round(canvas.height / 2) - 32, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let lit = 0;
+    for (let i = 0; i < px.length; i += 4) if (px[i] || px[i + 1] || px[i + 2]) lit++;
+
+    // GPU time, where the extension exists. A CPU timer cannot see the GPU.
+    const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    const cpu = [], queries = [];
+    for (let i = 0; i < frames; i++) {
+      globe.setCamera({ lng: i * 0.5 });
+      const q = ext ? gl.createQuery() : null;
+      if (q) gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
+      const t0 = performance.now();
+      globe.render();
+      cpu.push(performance.now() - t0);
+      if (q) { gl.endQuery(ext.TIME_ELAPSED_EXT); queries.push(q); }
+      await new Promise(requestAnimationFrame);
+    }
+
+    const gpu = [];
+    if (ext) {
+      await new Promise((r) => setTimeout(r, 250));
+      for (const q of queries) {
+        if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE) && !gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+          gpu.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
+        }
+        gl.deleteQuery(q);
+      }
+    }
+
+    // Idle: with no input and no rotation, the globe must schedule no frame at all.
+    let idleFrames = 0;
+    const count = () => { idleFrames++; };
+    globe.onRender(count);
+    await new Promise((r) => setTimeout(r, 1000));
+    globe.offRender(count);
+
+    done({ firstFrameMs, cpu, gpu, idleFrames, lit, markers, arcs });
+    globe.destroy();
+  }
 }
 </script>
