@@ -9,6 +9,7 @@
 import { view, project as projectPoint, unproject, MAX_LAT, type Camera, type View } from './camera';
 import { createSpherePass, type SphereStyle } from './sphere';
 import { createMarkerPass, type Marker, type MarkerPass } from './markers';
+import { createArcPass, type Arc, type ArcPass } from './arcs';
 import { unitVector } from './fibonacci';
 import { sampleAt } from './landmask';
 
@@ -40,6 +41,7 @@ export interface Globe {
   setTint(data: Uint8Array | null, width: number, height: number): void;
   setAutoRotate(degreesPerSecond: number): void;
   setMarkers(markers: readonly Marker[]): void;
+  setArcs(arcs: readonly Arc[]): void;
   /** The country id raster that `pick` reads. Build it with `countryIds` from landmask.ts. */
   setCountryIds(ids: Uint16Array | null, width: number, height: number): void;
   /** Screen position of a place, in CSS pixels. Use it to pin an HTML element. */
@@ -87,6 +89,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   // The marker pass is built on the first setMarkers call. A globe with no marker never compiles
   // that shader, which keeps its first frame shorter.
   let markerPass: MarkerPass | null = null;
+  let arcPass: ArcPass | null = null;
   let markerList: readonly Marker[] = [];
   let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
   let ids: { data: Uint16Array; width: number; height: number } | null = null;
@@ -129,6 +132,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     let drew: boolean;
     try {
       drew = sphere.draw(v);
+      if (arcPass && !arcPass.draw(v, [canvas.width, canvas.height])) drew = false;
       if (markerPass && !markerPass.draw(v)) drew = false;
     } catch (error) {
       destroyed = true;
@@ -264,6 +268,11 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       }
       invalidate();
     },
+    setArcs(arcs) {
+      arcPass ??= createArcPass(gl);
+      arcPass.set(arcs);
+      invalidate();
+    },
     setCountryIds(data, w, h) {
       ids = data ? { data, width: w, height: h } : null;
     },
@@ -304,6 +313,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       }
       sphere.destroy();
       markerPass?.destroy();
+      arcPass?.destroy();
       listeners.clear();
     },
   };

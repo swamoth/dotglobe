@@ -2,6 +2,10 @@
  * Frame-time harness. It serves the repository, drives Chrome, and reads the result that
  * bench/fixture.html reports.
  *
+ * Each scenario gets its own browser. ANGLE caches a shader translation for the life of the
+ * process, so a second page that uses the same shader links about ten times faster. Sharing one
+ * browser would report that cached time as the first frame, which no real visitor ever sees.
+ *
  * The CPU throttle stands in for a mid phone. It slows the CPU only. A desktop GPU stays fast,
  * so the GPU column is a lower bound, not a phone measurement. Read the CPU column as the budget.
  */
@@ -40,12 +44,13 @@ const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length 
 const p95 = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * 0.95))] : NaN; };
 const ms = (n) => (Number.isFinite(n) ? `${n.toFixed(2)} ms` : '   n/a');
 
-let browser;
+const launch = () => chromium.launch({
+  channel: 'chrome',
+  args: ['--use-angle=default', '--enable-gpu', '--ignore-gpu-blocklist'],
+});
+
 try {
-  browser = await chromium.launch({
-    channel: 'chrome',
-    args: ['--use-angle=default', '--enable-gpu', '--ignore-gpu-blocklist'],
-  });
+  await (await launch()).close();
 } catch (e) {
   console.error('Cannot start Chrome. Install Google Chrome, or set a channel playwright-core knows.');
   console.error(e.message);
@@ -53,23 +58,25 @@ try {
   process.exit(2);
 }
 
-const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
-const cdp = await page.context().newCDPSession(page);
 let failed = false;
 const rows = [];
 
 for (const s of SCENARIOS) {
-  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  const browser = await launch(); // a cold shader cache for each scenario
+  const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
+  const cdp = await page.context().newCDPSession(page);
+
   await page.goto(`${base}/bench/fixture.html${s.query}`, { waitUntil: 'load' });
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
   const result = await page.waitForFunction('window.__bench', null, { timeout: 60000 }).then((h) => h.jsonValue());
-  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  await browser.close();
 
-  if (result.split) console.log(`      main thread blocked ${result.split.blocked.toFixed(1)} ms (createGlobe ${result.split.create.toFixed(1)} ms, setLand ${result.split.land.toFixed(1)} ms). Cold WebGL2 context, paid once by the page: ${result.coldContextMs.toFixed(1)} ms.`);
   if (result.skipped) {
     console.log(`skip  ${s.name.padEnd(24)} ${result.skipped}`);
     continue;
   }
+  console.log(`      ${s.name}: main thread blocked ${result.split.blocked.toFixed(1)} ms (createGlobe ${result.split.create.toFixed(1)} ms, setLand ${result.split.land.toFixed(1)} ms). Cold WebGL2 context, paid once by the page: ${result.coldContextMs.toFixed(1)} ms.`);
+
   const cpu = median(result.cpu);
   const over = cpu > BUDGET.frameMs || result.firstFrameMs > BUDGET.firstFrameMs || result.idleFrames > BUDGET.idleFrames || result.lit === 0;
   if (over) failed = true;
@@ -84,6 +91,5 @@ if (rows.length) {
   }
 }
 
-await browser.close();
 server.close();
 process.exit(failed ? 1 : 0);
