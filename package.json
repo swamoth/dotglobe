@@ -1,0 +1,38 @@
+{
+  "name": "dotglobe",
+  "version": "0.1.0",
+  "description": "Dot-matrix globe in WebGL2. One quad, one ray-cast sphere, no three.js.",
+  "keywords": ["globe", "webgl2", "webgl", "dot", "fibonacci", "earth", "map"],
+  "license": "MIT",
+  "author": "Swagat Mohanty",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist"],
+  "main": "./dist/dotglobe.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/dotglobe.js" },
+    "./react": { "types": "./dist/react.d.ts", "default": "./dist/react.js" }
+  },
+  "scripts": {
+    "build": "node bench/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench:size": "node bench/size.mjs",
+    "bench:frame": "node bench/frame.mjs",
+    "bench": "npm run bench:size && npm run bench:frame"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": { "node": ">=20" }
+}
