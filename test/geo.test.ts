@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ARC_CLEARANCE_MAX, ARC_CLEARANCE_MIN, arcAltitudeFor, arcClearanceFor, arcHeight, centralAngle,
-  haversineKm, interpolate, slerp, toRad, unitVector, wrapLng, type LatLng,
+  haversineKm, interpolate, slerp, subsolarPoint, toRad, unitVector, wrapLng, type LatLng,
 } from '../src/geo';
 import { pathSegments } from '../src/arcs';
 
@@ -118,5 +118,29 @@ describe('paths', () => {
       { points: [[2, 2], [3, 3], [4, 4]] },
     ]);
     expect(segs).toHaveLength(3);
+  });
+});
+
+describe('subsolar point', () => {
+  it('sits near the equator at an equinox, and on the noon meridian', () => {
+    // 2026-03-20 14:46 UTC is the March equinox. Noon UTC less 2.77 hours puts the sun near
+    // lng -41.5, and the equation of time, about -7.5 minutes in March, moves it to about -39.6.
+    const p = subsolarPoint(new Date(Date.UTC(2026, 2, 20, 14, 46)));
+    expect(Math.abs(p.lat)).toBeLessThan(1);
+    expect(Math.abs(p.lng - -39.6)).toBeLessThan(0.5);
+  });
+
+  it('reaches the tropic of Cancer at the June solstice', () => {
+    const p = subsolarPoint(new Date(Date.UTC(2026, 5, 21, 12, 0)));
+    expect(p.lat).toBeGreaterThan(23);
+    expect(p.lat).toBeLessThan(23.5);
+  });
+
+  it('is over the prime meridian near noon UTC, and over the antimeridian near midnight', () => {
+    // Early November, when the equation of time is near its largest, about 16 minutes.
+    const noon = subsolarPoint(new Date(Date.UTC(2026, 10, 3, 12, 0)));
+    const midnight = subsolarPoint(new Date(Date.UTC(2026, 10, 3, 0, 0)));
+    expect(Math.abs(noon.lng)).toBeLessThan(5);
+    expect(Math.abs(midnight.lng)).toBeGreaterThan(175);
   });
 });

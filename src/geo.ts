@@ -97,3 +97,20 @@ export function arcAltitudeFor(a: LatLng, b: LatLng): number {
 
 /** Unit vector of a place. Re-exported so a caller needs one import for geometry. */
 export { unitVector };
+
+/**
+ * The place where the sun is overhead at `date`, in degrees.
+ *
+ * A short form of the solar position: the declination from the day of the year, and the
+ * longitude from the UTC time with the equation of time. It is within about 0.5 degrees of the
+ * astronomical value, which a globe cannot show anyway.
+ */
+export function subsolarPoint(date: Date): LatLng {
+  const start = Date.UTC(date.getUTCFullYear(), 0, 1);
+  const day = (date.getTime() - start) / 86400000; // days since Jan 1, with the fraction
+  const b = (2 * Math.PI * (day - 81)) / 365.24;
+  const declination = 23.44 * Math.sin(b);
+  const equationOfTime = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b); // minutes
+  const hours = (date.getTime() - Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())) / 3600000;
+  return { lat: declination, lng: wrapLng(-15 * (hours - 12 + equationOfTime / 60)) };
+}

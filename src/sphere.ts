@@ -9,7 +9,7 @@
  */
 
 import { program, texture, upload, type TextureOptions } from './gl';
-import { latticeSpacing } from './fibonacci';
+import { latticeSpacing, unitVector } from './fibonacci';
 import type { View } from './camera';
 
 /**
@@ -39,6 +39,8 @@ export interface SphereStyle {
   rim: number;
   /** Width of the glow outside the disc, in globe radii. 0 removes it. */
   glowWidth: number;
+  /** How dark the night side is, 0 to 1. 0 turns the terminator off. */
+  night: number;
   base: string;
   dot: string;
   glow: string;
@@ -53,6 +55,7 @@ export const DEFAULT_STYLE: SphereStyle = {
   oceanDots: 0.07,
   rim: 0.3,
   glowWidth: 0.18,
+  night: 0,
   base: '#121316',
   dot: '#e6e6e6',
   glow: '#c9cfd8',
@@ -77,7 +80,8 @@ in vec3 vRay;
 out vec4 fragColor;
 
 uniform vec3 uCamPos;
-uniform float uDots, uDotRadius, uDiffuse, uOceanDots, uRim, uGlowWidth;
+uniform float uDots, uDotRadius, uDiffuse, uOceanDots, uRim, uGlowWidth, uNight;
+uniform vec3 uSun;
 uniform vec3 uBase, uDot, uGlow;
 uniform sampler2D uLand, uTint;
 
@@ -183,6 +187,10 @@ void main() {
              + mix(uDot, tint.rgb, tint.a) * k
              // A thin edge highlight. A wide one reads as a ring sitting inside the silhouette.
              + pow(1.0 - nl, 10.0) * uGlow * uRim;
+  // Night. The terminator is a soft band, the width of twilight, around the plane at right
+  // angles to the sun. The glow outside the disc is left alone.
+  float day = smoothstep(-0.12, 0.12, dot(p, uSun));
+  color *= mix(1.0 - uNight, 1.0, day);
   fragColor = vec4(color, 1.0);
 }`;
 
@@ -217,11 +225,14 @@ export interface SpherePass {
   setStyle(style: Partial<SphereStyle>): void;
   setLand(data: Uint8Array | null, width: number, height: number): void;
   setTint(data: Uint8Array | null, width: number, height: number): void;
+  /** Where the sun is overhead. */
+  setSun(lat: number, lng: number): void;
   destroy(): void;
 }
 
 export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<SphereStyle> = {}): SpherePass {
   const style: SphereStyle = { ...DEFAULT_STYLE, ...initial };
+  let sun: [number, number, number] = [0, 0, 1];
   const prog = program(gl, VERT, FRAG);
   const vao = gl.createVertexArray()!; // WebGL2 needs a bound array object, even with no attribute
 
@@ -263,6 +274,8 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.uniform3fv(u.uBase, rgb(style.base));
       gl.uniform3fv(u.uDot, rgb(style.dot));
       gl.uniform3fv(u.uGlow, rgb(style.glow));
+      gl.uniform1f(u.uNight, style.night);
+      gl.uniform3fv(u.uSun, sun);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, land);
@@ -276,6 +289,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       return true;
     },
     setStyle(next) { Object.assign(style, next); },
+    setSun(lat, lng) { sun = unitVector(lat, lng); },
     setLand(data, width, height) {
       upload(gl, land, landFormat, data ?? new Uint8Array([0]), data ? width : 1, data ? height : 1);
     },

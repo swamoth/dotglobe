@@ -12,6 +12,7 @@ import { createMarkerPass, type Marker, type MarkerPass } from './markers';
 import { createArcPass, pathSegments, type Arc, type ArcPass, type Path } from './arcs';
 import { createRingPass, type Ring, type RingPass } from './rings';
 import { unitVector } from './fibonacci';
+import { subsolarPoint, wrapLng } from './geo';
 import { countryIndex, type CountryIndex } from './countries';
 import type { AreaGeometry } from './landmask';
 
@@ -38,10 +39,17 @@ export interface Globe {
   /** Ask for one frame on the next tick. Calling it many times still draws one frame. */
   invalidate(): void;
   setCamera(next: Partial<Camera>): void;
+  /**
+   * Move the camera to a place over `ms` milliseconds, with an ease in and out. Longitude takes
+   * the short way around. 0 ms jumps. A drag or a new flight cancels the one in progress.
+   */
+  flyTo(target: Partial<Camera>, ms?: number): void;
   setStyle(next: Partial<SphereStyle>): void;
   setLand(data: Uint8Array | null, width: number, height: number): void;
   setTint(data: Uint8Array | null, width: number, height: number): void;
   setAutoRotate(degreesPerSecond: number): void;
+  /** Put the sun over a place, or over where it is at a moment in time. Set `style.night` to see it. */
+  setSun(at: Date | { lat: number; lng: number }): void;
   setMarkers(markers: readonly Marker[]): void;
   setArcs(arcs: readonly Arc[]): void;
   /** Lines that follow the surface, for a cable or a route. */
@@ -110,6 +118,14 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let destroyed = false;
   let pending = false; // a frame was asked for, but the shader was not linked yet
   let clock = 0; // seconds since the first frame, for anything that animates
+  let flight: { from: Camera; to: Camera; start: number; ms: number } | null = null;
+
+  /*
+   * Honor the OS setting. When it asks for less motion the globe still draws every layer, but
+   * nothing moves on its own: no rotation, a ring and a dash hold one phase, and a flight jumps.
+   */
+  const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reducedMotion) clock = 1.5; // a ring at half radius, which reads as a ring and not as nothing
 
   let settleReady!: () => void;
   let failReady!: (reason: unknown) => void;
@@ -168,13 +184,24 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     const dt = lastTime ? Math.min(0.1, (now - lastTime) / 1000) : 0;
     lastTime = now;
 
-    clock += dt;
-    // Three things keep frames coming on their own: a pulse, a travelling dash, and the two
+    if (!reducedMotion) clock += dt;
+    // What keeps frames coming on its own: a pulse, a travelling dash, a flight, and the two
     // camera motions below. Each one ends, and then the loop stops.
-    let moving = (ringPass !== null && ringPass.count > 0)
+    let moving = !reducedMotion && ((ringPass !== null && ringPass.count > 0)
       || (arcPass !== null && arcPass.animated)
-      || (pathPass !== null && pathPass.animated);
-    if (autoRotate !== 0) {
+      || (pathPass !== null && pathPass.animated));
+
+    if (flight) {
+      if (flight.start < 0) flight.start = now;
+      const t = Math.min(1, (now - flight.start) / flight.ms);
+      const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2; // ease in and out
+      camera.lat = flight.from.lat + (flight.to.lat - flight.from.lat) * e;
+      camera.lng = flight.from.lng + (flight.to.lng - flight.from.lng) * e;
+      camera.altitude = flight.from.altitude + (flight.to.altitude - flight.from.altitude) * e;
+      if (t >= 1) flight = null; else moving = true;
+    }
+
+    if (autoRotate !== 0 && !reducedMotion) {
       camera.lng += autoRotate * dt;
       moving = true;
     }
@@ -198,11 +225,23 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     frame = requestAnimationFrame(tick);
   }
 
-  // Pointer control: drag to turn, wheel to zoom. One pointer at a time.
+  // Pointer control: drag to turn, wheel or pinch to zoom, arrow keys to turn, + and - to zoom.
   let dragging = false;
   let lastX = 0, lastY = 0, lastMove = 0;
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinchStart = 0; // distance between two pointers when the pinch began
+  let pinchAltitude = 0;
 
   const onPointerDown = (e: PointerEvent) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchStart = Math.hypot(a.x - b.x, a.y - b.y);
+      pinchAltitude = camera.altitude;
+      dragging = false; // two fingers zoom, they do not turn
+      return;
+    }
+    flight = null;
     dragging = true;
     spin = 0;
     lastX = e.clientX;
@@ -212,6 +251,14 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   };
 
   const onPointerMove = (e: PointerEvent) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStart > 0) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      camera.altitude = clampAltitude(pinchAltitude * (pinchStart / Math.max(1, d)));
+      invalidate();
+      return;
+    }
     if (!dragging) return;
     // One globe radius across the short side of the canvas turns about 180 degrees.
     const scale = 180 / Math.min(width, height);
@@ -229,11 +276,29 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   };
 
   const onPointerUp = (e: PointerEvent) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStart = 0;
     if (!dragging) return;
     dragging = false;
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     // A pointer that rested before it lifted must not throw the globe.
     if (e.timeStamp - lastMove > 80) spin = 0;
+    invalidate();
+  };
+
+  const onKey = (e: KeyboardEvent) => {
+    const step = e.shiftKey ? 15 : 5;
+    switch (e.key) {
+      case "ArrowLeft": camera.lng -= step; break;
+      case "ArrowRight": camera.lng += step; break;
+      case "ArrowUp": camera.lat = Math.min(MAX_LAT, camera.lat + step); break;
+      case "ArrowDown": camera.lat = Math.max(-MAX_LAT, camera.lat - step); break;
+      case "+": case "=": camera.altitude = clampAltitude(camera.altitude * 0.85); break;
+      case "-": case "_": camera.altitude = clampAltitude(camera.altitude / 0.85); break;
+      default: return;
+    }
+    e.preventDefault();
+    flight = null;
     invalidate();
   };
 
@@ -250,7 +315,9 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerUp);
     canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('keydown', onKey);
     canvas.style.touchAction = 'none'; // the browser must not scroll the page on a drag
+    if (canvas.tabIndex < 0) canvas.tabIndex = 0; // a canvas takes keys only when it can take focus
   }
 
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
@@ -269,10 +336,26 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       if (next.altitude !== undefined) camera.altitude = clampAltitude(next.altitude);
       invalidate();
     },
+    flyTo(target, ms = 1000) {
+      const to: Camera = {
+        lat: Math.max(-MAX_LAT, Math.min(MAX_LAT, target.lat ?? camera.lat)),
+        lng: target.lng === undefined ? camera.lng : camera.lng + wrapLng(target.lng - camera.lng),
+        altitude: clampAltitude(target.altitude ?? camera.altitude),
+      };
+      if (ms <= 0 || reducedMotion) { Object.assign(camera, to); flight = null; invalidate(); return; }
+      flight = { from: { ...camera }, to, start: -1, ms };
+      spin = 0;
+      invalidate();
+    },
     setStyle(next) { sphere.setStyle(next); invalidate(); },
     setLand(data, w, h) { sphere.setLand(data, w, h); invalidate(); },
     setTint(data, w, h) { sphere.setTint(data, w, h); invalidate(); },
     setAutoRotate(speed) { autoRotate = speed; invalidate(); },
+    setSun(at) {
+      const p = at instanceof Date ? subsolarPoint(at) : at;
+      sphere.setSun(p.lat, p.lng);
+      invalidate();
+    },
     setMarkers(markers) {
       markerPass ??= createMarkerPass(gl);
       markerPass.set(markers);
@@ -340,6 +423,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
         canvas.removeEventListener('pointerup', onPointerUp);
         canvas.removeEventListener('pointercancel', onPointerUp);
         canvas.removeEventListener('wheel', onWheel);
+        canvas.removeEventListener('keydown', onKey);
       }
       sphere.destroy();
       markerPass?.destroy();

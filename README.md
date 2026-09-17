@@ -39,7 +39,8 @@ globe.setArcs([{ startLat: 51.5, startLng: -0.13, endLat: -33.9, endLng: 151.2 }
 await globe.ready; // the first frame is on screen
 ```
 
-Drag to turn, and use the wheel to zoom. The globe draws one frame when something changes, then
+Drag to turn. Use the wheel or a pinch to zoom. With the canvas focused, the arrow keys turn
+and + and - zoom. `globe.flyTo({ lat, lng, altitude }, ms)` moves the camera with an ease. The globe draws one frame when something changes, then
 stops. While nothing moves it schedules no frame and uses no CPU. Four things keep frames coming, and each
 ends on its own: auto-rotation, inertia after a drag, a ring, and a dash that travels. Measured:
 61 frames a second with a dashed arc on screen, and 0 with the same arc solid.
@@ -75,7 +76,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 11.7 kB |
+| Core bundle, gzipped | under 20 kB | 12.8 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -110,7 +111,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **32.0 kB** | **11.7 kB** |
+| **dotglobe** | **34.5 kB** | **12.8 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
@@ -148,6 +149,9 @@ cache that the harness cannot clear.
 - [x] Rings that pulse outward from a place
 - [x] Paths that follow the surface, for a cable or a route
 - [x] Dashed arcs, with a pattern that can travel
+- [x] `flyTo` with an ease in and out, pinch zoom, and keyboard control
+- [x] `prefers-reduced-motion`: nothing moves on its own when the OS asks
+- [x] A day and night terminator, with the sun placed by a date
 - [x] Vanilla core, plus a React hook at `dotglobe/react`
 - [x] A demo page with real coastlines
 

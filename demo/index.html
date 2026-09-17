@@ -23,6 +23,8 @@
   #debug input[type=range] { width: 100%; margin: 0; }
   #debug input[type=color] { width: 100%; height: 20px; padding: 0; border: 0; background: none; }
   #debug output { text-align: right; color: #e6e6e6; font-variant-numeric: tabular-nums; }
+  #fly { display: flex; flex-wrap: wrap; gap: 4px; }
+  #fly button { font: inherit; font-size: 11px; padding: 1px 6px; background: #1c1f26; color: #e6e6e6; border: 1px solid #2a2f38; border-radius: 3px; cursor: pointer; }
   #stats { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2a2f38; color: #e6e6e6; white-space: pre; font-variant-numeric: tabular-nums; }
 </style>
 <div id="stage">
@@ -31,7 +33,7 @@
   <details id="debug" open><summary>debug</summary><div id="controls"></div><div id="stats"></div></details>
 </div>
 <script type="module">
-import { createGlobe, landMask, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
+import { createGlobe, landMask, countryTint, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
 import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 
 const COLS = 2048, ROWS = 1024;
@@ -160,12 +162,24 @@ styleRange('oceanDots', 0, 0.6, 0.01);
 section('light');
 styleRange('rim', 0, 1, 0.05);
 styleRange('glowWidth', 0, 0.6, 0.01);
+styleRange('night', 0, 1, 0.05);
 color('base'); color('dot'); color('glow');
+globe.setSun(new Date()); // where the sun is right now, shown once night is above 0
 
 section('camera');
 const altitude = range('altitude', 0.15, 4, 0.01, () => globe.camera.altitude, (v) => globe.setCamera({ altitude: v }));
 const latitude = range('lat', -89, 89, 1, () => globe.camera.lat, (v) => globe.setCamera({ lat: v }));
 range('autoRotate', 0, 40, 1, () => autoRotate, (v) => { autoRotate = v; globe.setAutoRotate(v); });
+const fly = document.createElement('label');
+fly.className = 'check';
+fly.innerHTML = '<span>fly to</span><span id="fly"></span>';
+controls.append(fly);
+for (const c of CITIES) {
+  const b = document.createElement('button');
+  b.textContent = c.name;
+  b.onclick = () => { autoRotate = 0; globe.setAutoRotate(0); globe.flyTo({ lat: c.lat, lng: c.lng, altitude: 0.9 }, 1200); };
+  fly.querySelector('#fly').append(b);
+}
 
 section('layers');
 for (const name in LAYERS) check(name, true, (on) => globe[SETTER[name]](on ? LAYERS[name] : []));
@@ -204,14 +218,25 @@ const maskMs = performance.now() - started;
 await globe.ready;
 readout.textContent = `${countries.length} countries, mask built in ${maskMs.toFixed(0)} ms. Drag to turn, scroll to zoom.`;
 
+// Hover highlight. The tint map is repainted only when the country under the cursor changes.
+let hovered = -1;
+const highlight = (i) => {
+  if (i === hovered) return;
+  hovered = i;
+  const entries = i >= 0 ? [{ geometry: countries[i].geometry, color: 'rgba(122, 162, 247, 0.55)' }] : [];
+  globe.setTint(entries.length ? countryTint(entries, 1024, 512) : null, 1024, 512);
+};
+
 canvas.addEventListener('pointermove', (e) => {
   const hit = globe.pick(e.offsetX, e.offsetY);
-  if (!hit) { readout.textContent = 'off the globe'; return; }
+  if (!hit) { readout.textContent = 'off the globe'; highlight(-1); return; }
+  highlight(hit.country);
   const place = hit.country >= 0 ? names[hit.country] : 'ocean';
   const marker = hit.marker >= 0 ? ` — ${CITIES[hit.marker].name}` : '';
   readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}`;
 });
 
+canvas.addEventListener('pointerleave', () => highlight(-1));
 canvas.addEventListener('pointerdown', () => { autoRotate = 0; globe.setAutoRotate(0); });
 
 // Handy from the console: globe.pick(x, y), globe.project(lat, lng), globe.camera.
