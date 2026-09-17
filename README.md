@@ -95,11 +95,9 @@ alone it reaches 31 pixels at the closest zoom and the globe reads as a field of
 zoom to hold it. A coastline gains detail as you move in, rather than losing it. Set `dotPitch`
 to 0 to fix the lattice at `dots` instead.
 
-The lattice has a ceiling. Measured on this shader, it resolves cleanly to about 280000 points,
-thins at 300000, and returns nothing past 330000, because float32 can no longer tell a nearest
-point from its neighbor. `MAX_DOTS` is 262144, under that edge. Past the altitude where the
-ceiling binds, the dots spread apart, and their diameter is capped at `dotPitch` so they stay
-dots. `minAltitude` defaults to 0.35 to keep the camera inside the range that still reads well.
+The lattice resolves exactly to 8 million points on the GPU. Every place the shader needs the
+fractional part of a large product, it uses exact 32-bit integer math instead of float32. That
+holds a 7 pixel pitch at every zoom the camera allows.
 
 ### Against the stack it replaces
 

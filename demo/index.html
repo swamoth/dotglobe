@@ -151,8 +151,8 @@ const styleRange = (name, min, max, step) =>
   range(name, min, max, step, () => style[name], (v) => { style[name] = v; globe.setStyle({ [name]: v }); });
 
 section('dots');
-styleRange('dotPitch', 0, 14, 0.5);
-styleRange('dots', 1000, MAX_DOTS, 1000);
+styleRange('dotPitch', 3, 14, 0.5);
+styleRange('dots', 1000, 2000000, 1000);
 styleRange('dotRatio', 0.05, 0.5, 0.01);
 styleRange('diffuse', 0.2, 4, 0.1);
 styleRange('oceanDots', 0, 0.6, 0.01);
@@ -163,7 +163,7 @@ styleRange('glowWidth', 0, 0.6, 0.01);
 color('base'); color('dot'); color('glow');
 
 section('camera');
-const altitude = range('altitude', 0.35, 4, 0.01, () => globe.camera.altitude, (v) => globe.setCamera({ altitude: v }));
+const altitude = range('altitude', 0.15, 4, 0.01, () => globe.camera.altitude, (v) => globe.setCamera({ altitude: v }));
 const latitude = range('lat', -89, 89, 1, () => globe.camera.lat, (v) => globe.setCamera({ lat: v }));
 range('autoRotate', 0, 40, 1, () => autoRotate, (v) => { autoRotate = v; globe.setAutoRotate(v); });
 

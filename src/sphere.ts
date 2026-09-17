@@ -13,14 +13,12 @@ import { latticeSpacing } from './fibonacci';
 import type { View } from './camera';
 
 /**
- * Upper bound on the lattice.
- *
- * The 32-bit index math lifted the 2^15 ceiling of the WebGL1 method, but float32 sets a new one.
- * Measured on this shader: the lattice resolves cleanly to about 280000 points, thins at 300000,
- * and returns nothing at all past 330000, because a nearest point can no longer be told from its
- * neighbor. This value keeps a margin under that.
+ * Upper bound on the lattice. Every product in the shader that needs the fractional part of a
+ * large number uses exact 32-bit integer math, so the count is bounded by float32 elsewhere:
+ * uDots - 2 * idx must stay exact, which holds below 2^24. Measured exact at every latitude to
+ * 8 million points. Past the altitude where this binds, the dots spread apart.
  */
-export const MAX_DOTS = 262144;
+export const MAX_DOTS = 8000000;
 
 export interface SphereStyle {
   /**
@@ -96,7 +94,13 @@ vec3 nearestLattice(vec3 p, out float dist) {
   float byDots = 1.0 / uDots;
   float k = max(2.0, floor(log2(SQRT5 * uDots * PI * (1.0 - p.z * p.z)) * 0.72021));
   vec2 f = floor(pow(PHI, k) / SQRT5 * vec2(1.0, PHI) + 0.5);
-  vec2 br1 = fract((f + 1.0) * (PHI - 1.0)) * TAU - 3.883222;
+  /*
+   * fract((f + 1) * (PHI - 1)), exactly, with the same unsigned multiply that theta uses below.
+   * In float32 the product is a number near 400 whose fractional part has a resolution of about
+   * 3e-5. That error goes through a determinant that is near 12 for some k, and comes out as
+   * more than one whole lattice cell, so a band of latitude found no nearest point and went dark.
+   */
+  vec2 br1 = vec2((uvec2(f) + 1u) * 2654435769u) * (TAU / 4294967296.0) - 3.883222;
   vec2 br2 = -2.0 * f;
   vec2 sp = vec2(atan(p.y, p.x), p.z - 1.0);
   vec2 c = floor(vec2(br2.y * sp.x - br1.y * (sp.y * uDots + 1.0),
@@ -250,18 +254,8 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
        */
       const wanted = style.dotPitch > 0 ? dotsForPitch(v, heightPx, style.dotPitch) : style.dots;
       const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
-      let radius = style.dotRatio * latticeSpacing(dots);
-      if (style.dotPitch > 0) {
-        /*
-         * Past the lattice ceiling the camera keeps moving in and the spacing keeps growing, so a
-         * dot would swell into a blob. Cap its diameter at the target pitch instead. The dots then
-         * spread apart into a sparse grid, which still reads as a dot matrix.
-         */
-        const maxRadius = (style.dotPitch * 0.5) / pixelsPerUnit(v, heightPx);
-        radius = Math.min(radius, maxRadius);
-      }
       gl.uniform1f(u.uDots, dots);
-      gl.uniform1f(u.uDotRadius, radius);
+      gl.uniform1f(u.uDotRadius, style.dotRatio * latticeSpacing(dots));
       gl.uniform1f(u.uDiffuse, style.diffuse);
       gl.uniform1f(u.uOceanDots, style.oceanDots);
       gl.uniform1f(u.uRim, style.rim);

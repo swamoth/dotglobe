@@ -86,8 +86,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   const gl = context;
 
   const camera: Camera = { ...DEFAULT_CAMERA, ...options.camera };
-  // The lattice tops out at MAX_DOTS, so below this the dots spread out faster than they shrink.
-  const minAltitude = options.minAltitude ?? 0.35;
+  const minAltitude = options.minAltitude ?? 0.15;
   const maxAltitude = options.maxAltitude ?? 4;
   const dpr = Math.min(options.devicePixelRatio ?? (globalThis.devicePixelRatio || 1), 2);
   const sphere = createSpherePass(gl, options.style);
