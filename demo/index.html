@@ -11,16 +11,27 @@
   #hud { position: absolute; left: 16px; top: 16px; pointer-events: none; }
   #hud b { color: #e6e6e6; font-weight: 500; letter-spacing: .04em; }
   #readout { margin-top: 6px; }
-  .pin { position: absolute; transform: translate(-50%, -100%); pointer-events: none; transition: opacity .15s; }
+  .pin { position: absolute; transform: translate(-50%, -100%); pointer-events: none; }
   .pin span { display: block; padding: 2px 6px; border: 1px solid #2a2f38; border-radius: 3px; background: #14161a; color: #e6e6e6; white-space: nowrap; }
-  .pin.away { opacity: 0; }
+
+  /* Debug panel. Everything in it is a plain form control bound to one globe setter. */
+  #debug { position: absolute; z-index: 1; right: 16px; top: 16px; width: 250px; max-height: calc(100% - 32px); overflow: auto; background: #14161add; border: 1px solid #2a2f38; border-radius: 4px; padding: 8px 10px; font-size: 12px; }
+  #debug summary { color: #e6e6e6; cursor: pointer; user-select: none; }
+  #debug h4 { margin: 10px 0 4px; font-size: 11px; font-weight: 500; color: #7aa2f7; text-transform: uppercase; letter-spacing: .06em; }
+  #debug label { display: grid; grid-template-columns: 76px 1fr 44px; align-items: center; gap: 6px; margin: 3px 0; }
+  #debug label.check { grid-template-columns: auto 1fr; }
+  #debug input[type=range] { width: 100%; margin: 0; }
+  #debug input[type=color] { width: 100%; height: 20px; padding: 0; border: 0; background: none; }
+  #debug output { text-align: right; color: #e6e6e6; font-variant-numeric: tabular-nums; }
+  #stats { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2a2f38; color: #e6e6e6; white-space: pre; font-variant-numeric: tabular-nums; }
 </style>
 <div id="stage">
   <canvas id="globe"></canvas>
   <div id="hud"><b>dotglobe</b><div id="readout">loading coastlines</div></div>
+  <details id="debug" open><summary>debug</summary><div id="controls"></div><div id="stats"></div></details>
 </div>
 <script type="module">
-import { createGlobe, landMask } from '../dist/dotglobe.js';
+import { createGlobe, landMask, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
 import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 
 const COLS = 2048, ROWS = 1024;
@@ -37,44 +48,44 @@ const CITIES = [
   { name: 'Bengaluru', lat: 12.9716, lng: 77.5946 },
 ];
 
-const globe = createGlobe(canvas, {
-  camera: { lat: 20, lng: 12, altitude: 1.7 },
-  autoRotate: 4,
-  style: { dots: 26000, dotRatio: 0.28 },
-});
-
-globe.setMarkers(CITIES.map((c) => ({ ...c, size: 0.014, color: '#ff5533' })));
-globe.setRings(CITIES.slice(0, 3).map((c) => ({
-  lat: c.lat, lng: c.lng, maxRadius: 9, width: 1.2, period: 3, color: '#ff5533', opacity: 0.9,
-})));
-globe.setArcs([
-  { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#7aa2f7' },
-  { startLat: -23.5505, startLng: -46.6333, endLat: -1.2921, endLng: 36.8219, color: '#7aa2f7' },
-  { startLat: 12.9716, startLng: 77.5946, endLat: -33.8688, endLng: 151.2093, color: '#7aa2f7' },
-  { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#9ece6a',
-    dashLength: 0.04, dashGap: 0.03, dashSpeed: 0.35 },
-]);
-
-// Paths follow the surface: two submarine-cable style routes, sampled along great circles.
+// Sample a great circle, for a path that follows the surface like a cable.
 const route = (a, b, n = 24) => {
   const pts = [];
+  const la1 = a[0] * Math.PI / 180, lo1 = a[1] * Math.PI / 180;
+  const la2 = b[0] * Math.PI / 180, lo2 = b[1] * Math.PI / 180;
+  const d = 2 * Math.asin(Math.sqrt(Math.sin((la2 - la1) / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin((lo2 - lo1) / 2) ** 2));
   for (let i = 0; i <= n; i++) {
-    const f = i / n;
-    const la1 = a[0] * Math.PI / 180, lo1 = a[1] * Math.PI / 180;
-    const la2 = b[0] * Math.PI / 180, lo2 = b[1] * Math.PI / 180;
-    const d = 2 * Math.asin(Math.sqrt(Math.sin((la2-la1)/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin((lo2-lo1)/2)**2));
-    const A = Math.sin((1-f)*d)/Math.sin(d), B = Math.sin(f*d)/Math.sin(d);
-    const x = A*Math.cos(la1)*Math.cos(lo1) + B*Math.cos(la2)*Math.cos(lo2);
-    const y = A*Math.cos(la1)*Math.sin(lo1) + B*Math.cos(la2)*Math.sin(lo2);
-    const z = A*Math.sin(la1) + B*Math.sin(la2);
-    pts.push([Math.atan2(z, Math.hypot(x,y)) * 180/Math.PI, Math.atan2(y,x) * 180/Math.PI]);
+    const f = i / n, A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(la1) * Math.cos(lo1) + B * Math.cos(la2) * Math.cos(lo2);
+    const y = A * Math.cos(la1) * Math.sin(lo1) + B * Math.cos(la2) * Math.sin(lo2);
+    const z = A * Math.sin(la1) + B * Math.sin(la2);
+    pts.push([Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI, Math.atan2(y, x) * 180 / Math.PI]);
   }
   return pts;
 };
-globe.setPaths([
-  { points: route([51.5074,-0.1278], [40.71,-74.01]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
-  { points: route([-33.87,151.21], [1.29,103.85]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
-]);
+
+// Layer data, kept so the debug toggles can put a layer back after removing it.
+const LAYERS = {
+  markers: CITIES.map((c) => ({ ...c, size: 0.014, color: '#ff5533' })),
+  rings: CITIES.slice(0, 3).map((c) => ({ lat: c.lat, lng: c.lng, maxRadius: 9, width: 1.2, period: 3, color: '#ff5533', opacity: 0.9 })),
+  arcs: [
+    { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#7aa2f7' },
+    { startLat: -23.5505, startLng: -46.6333, endLat: -1.2921, endLng: 36.8219, color: '#7aa2f7' },
+    { startLat: 12.9716, startLng: 77.5946, endLat: -33.8688, endLng: 151.2093, color: '#7aa2f7' },
+    { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#9ece6a', dashLength: 0.04, dashGap: 0.03, dashSpeed: 0.35 },
+  ],
+  paths: [
+    { points: route([51.5074, -0.1278], [40.71, -74.01]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
+    { points: route([-33.87, 151.21], [1.29, 103.85]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
+  ],
+};
+const SETTER = { markers: 'setMarkers', rings: 'setRings', arcs: 'setArcs', paths: 'setPaths' };
+
+const globe = createGlobe(canvas, {
+  camera: { lat: 20, lng: 12, altitude: 1.7 },
+  autoRotate: 4,
+});
+for (const name in LAYERS) globe[SETTER[name]](LAYERS[name]);
 
 // One HTML element for each city, moved by project() on every frame.
 const pins = CITIES.map((c) => {
@@ -99,7 +110,87 @@ globe.onRender(() => {
   }
 });
 
-// Coastlines. The mask is built in the browser from Natural Earth polygons.
+// ---- Debug panel ---------------------------------------------------------------------------
+
+const controls = document.getElementById('controls');
+const stats = document.getElementById('stats');
+const style = { ...DEFAULT_STYLE };
+let autoRotate = 4;
+
+const section = (title) => controls.insertAdjacentHTML('beforeend', `<h4>${title}</h4>`);
+
+/** A range input bound to one setter. `get` reads the current value, `set` applies a new one. */
+function range(name, min, max, step, get, set) {
+  const label = document.createElement('label');
+  label.innerHTML = `<span>${name}</span><input type="range" min="${min}" max="${max}" step="${step}"><output></output>`;
+  const input = label.querySelector('input'), out = label.querySelector('output');
+  const show = (v) => { out.value = Number(v).toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0); };
+  input.value = get(); show(input.value);
+  input.oninput = () => { set(Number(input.value)); show(input.value); };
+  controls.append(label);
+  return { refresh() { input.value = get(); show(input.value); } };
+}
+
+function color(name) {
+  const label = document.createElement('label');
+  label.innerHTML = `<span>${name}</span><input type="color" value="${style[name]}"><output>${style[name]}</output>`;
+  const input = label.querySelector('input'), out = label.querySelector('output');
+  input.oninput = () => { style[name] = input.value; out.value = input.value; globe.setStyle({ [name]: input.value }); };
+  controls.append(label);
+}
+
+function check(name, initial, set) {
+  const label = document.createElement('label');
+  label.className = 'check';
+  label.innerHTML = `<input type="checkbox" ${initial ? 'checked' : ''}><span>${name}</span>`;
+  label.querySelector('input').onchange = (e) => set(e.target.checked);
+  controls.append(label);
+}
+
+const styleRange = (name, min, max, step) =>
+  range(name, min, max, step, () => style[name], (v) => { style[name] = v; globe.setStyle({ [name]: v }); });
+
+section('dots');
+styleRange('dotPitch', 0, 14, 0.5);
+styleRange('dots', 1000, MAX_DOTS, 1000);
+styleRange('dotRatio', 0.05, 0.5, 0.01);
+styleRange('diffuse', 0.2, 4, 0.1);
+styleRange('oceanDots', 0, 0.6, 0.01);
+
+section('light');
+styleRange('rim', 0, 1, 0.05);
+styleRange('glowWidth', 0, 0.6, 0.01);
+color('base'); color('dot'); color('glow');
+
+section('camera');
+const altitude = range('altitude', 0.35, 4, 0.01, () => globe.camera.altitude, (v) => globe.setCamera({ altitude: v }));
+const latitude = range('lat', -89, 89, 1, () => globe.camera.lat, (v) => globe.setCamera({ lat: v }));
+range('autoRotate', 0, 40, 1, () => autoRotate, (v) => { autoRotate = v; globe.setAutoRotate(v); });
+
+section('layers');
+for (const name in LAYERS) check(name, true, (on) => globe[SETTER[name]](on ? LAYERS[name] : []));
+
+// Stats: frames in the last second, the lattice in use, and the camera. Refreshed once a second,
+// so the panel itself never becomes the thing that costs frames.
+let frames = 0;
+globe.onRender(() => { frames++; });
+setInterval(() => {
+  const v = view(globe.camera, canvas.clientWidth / canvas.clientHeight);
+  const wanted = style.dotPitch > 0 ? dotsForPitch(v, canvas.height, style.dotPitch) : style.dots;
+  const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
+  const { lat, lng, altitude: alt } = globe.camera;
+  stats.textContent = [
+    `fps       ${String(frames).padStart(4)}   (0 when idle)`,
+    `dots      ${String(dots).padStart(7)}${dots === MAX_DOTS ? '  at ceiling' : ''}`,
+    `camera    ${lat.toFixed(1)}, ${((((lng + 180) % 360) + 360) % 360 - 180).toFixed(1)}  alt ${alt.toFixed(2)}`,
+    `canvas    ${canvas.width}x${canvas.height} @${(canvas.width / canvas.clientWidth).toFixed(2)}x`,
+  ].join('\n');
+  frames = 0;
+  altitude.refresh(); latitude.refresh();
+}, 1000);
+
+// ---- Coastlines ---------------------------------------------------------------------------
+
 const topo = await fetch('./countries-110m.json').then((r) => r.json());
 const countries = feature(topo, topo.objects.countries).features
   .filter((f) => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
@@ -121,7 +212,7 @@ canvas.addEventListener('pointermove', (e) => {
   readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}`;
 });
 
-canvas.addEventListener('pointerdown', () => globe.setAutoRotate(0));
+canvas.addEventListener('pointerdown', () => { autoRotate = 0; globe.setAutoRotate(0); });
 
 // Handy from the console: globe.pick(x, y), globe.project(lat, lng), globe.camera.
 window.globe = globe;

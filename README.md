@@ -160,9 +160,13 @@ npm install
 npm run demo      # builds, then serves the demo on http://127.0.0.1:5173
 ```
 
-The demo draws real coastlines from Natural Earth, six city markers, four arcs, and HTML labels
-pinned by `project()`. Drag to turn, scroll to zoom. `window.globe` is exposed, so `globe.pick`
-and `globe.project` can be tried from the console.
+The demo draws real coastlines from Natural Earth, six city markers, rings, arcs, cable paths,
+and HTML labels pinned by `project()`. Drag to turn, scroll to zoom.
+
+The debug panel at the top right binds every style value, the camera, and each layer to a plain
+form control, and shows the frame rate, the lattice in use, and the camera. Turn every layer
+off and stop the rotation, and the frame rate reads 0. `window.globe` is exposed too, so
+`globe.pick` and `globe.project` can be tried from the console.
 
 ## Develop
 
