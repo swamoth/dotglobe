@@ -5,6 +5,8 @@ export * from './fibonacci';
 export * from './geo';
 export * from './globe';
 export * from './heatmap';
+export * from './image';
+export * from './labels';
 export * from './landmask';
 export * from './markers';
 export * from './rings';

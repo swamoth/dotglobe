@@ -28,6 +28,10 @@
     "./react": {
       "types": "./dist/react.d.ts",
       "default": "./dist/react.js"
+    },
+    "./land": {
+      "types": "./dist/land.d.ts",
+      "default": "./dist/land.js"
     }
   },
   "scripts": {
@@ -39,7 +43,8 @@
     "bench:frame": "node bench/frame.mjs",
     "bench": "npm run bench:size && npm run bench:frame",
     "demo": "node bench/build.mjs && node bench/serve.mjs 5173",
-    "bench:compare": "node bench/compare.mjs"
+    "bench:compare": "node bench/compare.mjs",
+    "bake:land": "node scripts/bake-land.mjs 1024 512 write"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -54,6 +59,7 @@
     "esbuild": "^0.25.0",
     "playwright-core": "^1.63.0",
     "react": "^19.3.0",
+    "topojson-client": "^3.1.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

@@ -26,13 +26,14 @@ COBE also uses.
 
 ```js
 import { createGlobe } from 'dotglobe';
+import { land } from 'dotglobe/land';
 
 const globe = createGlobe(document.querySelector('canvas'), {
   camera: { lat: 20, lng: 0, altitude: 1.6 },
   autoRotate: 6, // degrees of longitude per second
 });
 
-globe.setLand(landBytes, 2048, 1024); // 1 byte per cell, 255 for land
+globe.setLand(...await land()); // the mask that ships in 'dotglobe/land', or your own
 globe.setMarkers([{ lat: 51.5, lng: -0.13, size: 0.012, color: '#ff5533' }]);
 globe.setArcs([{ startLat: 51.5, startLng: -0.13, endLat: -33.9, endLng: 151.2 }]);
 
@@ -45,18 +46,42 @@ stops. While nothing moves it schedules no frame and uses no CPU. Four things ke
 ends on its own: auto-rotation, inertia after a drag, a ring, and a dash that travels. Measured:
 61 frames a second with a dashed arc on screen, and 0 with the same arc solid.
 
-Build the land mask from country polygons with `landMask` in the same package, or upload a
-prebaked raster of your own.
+`dotglobe/land` is a 7 kB mask of Natural Earth 110m coastlines, for a globe with no data of
+its own. For a sharper coast, build one from country polygons with `landMask`, from an image
+with `imageLand`, or upload a raster of your own: 1 byte per cell, 255 for land.
 
-### HTML overlays and picking
+An arc can draw itself in and erase itself: `{ ..., appear: 900, vanish: 900 }`, in
+milliseconds, plus `delay`. A path does the same along its length. The globe keeps drawing
+until the last one settles, then stops.
+
+### Events, labels, and picking
 
 ```js
+globe.on('click', (hit) => hit && globe.flyTo({ lat: hit.lat, lng: hit.lng, altitude: 0.6 }));
+globe.on('hover', (hit) => tooltip.textContent = hit ? names[hit.country] : '');
+globe.setLabels([{ lat: 51.5, lng: -0.13, text: 'London', priority: 2 }]);
+
 const at = globe.project(51.5, -0.13);   // CSS pixels, plus visible: false behind the globe
-const hit = globe.pick(event.offsetX, event.offsetY); // { lat, lng, marker, country } or null
+const hit = globe.pick(x, y);            // { lat, lng, marker, country, arc } or null
 ```
 
-`project` and the shaders run the same ray-sphere occlusion test, so an overlay fades exactly
-when its pixel does.
+Events: `click`, `rightclick`, `hover`, `camera`, `render`, and `draw`, which hands you
+the view so you can draw your own WebGL layer with `globe.gl`. A label is an HTML element in a
+layer over the canvas. The globe hides a label behind the globe, and hides one that would
+overlap a label with a higher priority. `project` and the shaders run the same ray-sphere
+occlusion test, so an overlay hides exactly when its pixel does.
+
+`globe.toBlob()` gives the frame as an image. When the browser drops the WebGL context, the
+globe builds itself again from the data you gave it. When the canvas scrolls out of view, the
+globe stops drawing until it is back.
+
+### A globe from an image
+
+```js
+const img = await createImageBitmap(await (await fetch('earth.png')).blob());
+globe.setLand(imageLand(img, 2048, 1024), 2048, 1024); // bright pixels are land
+globe.setTint(imageTint(img, 2048, 1024), 2048, 1024); // or: each dot takes the color under it
+```
 
 ### React
 
@@ -76,7 +101,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 14.2 kB |
+| Core bundle, gzipped | under 20 kB | 16.8 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -84,7 +109,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 | 10000 markers | 60 fps | no measurable GPU cost |
 | 1000 arcs | 60 fps | about 0.5 ms of GPU added |
 
-The React entry is a separate 0.32 kB module that imports the core, so a caller who does not use
+The React entry is a separate 0.44 kB module that imports the core, so a caller who does not use
 React pays nothing.
 
 ### Dot density follows the zoom
@@ -111,7 +136,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **38.3 kB** | **14.2 kB** |
+| **dotglobe** | **44.5 kB** | **16.8 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
@@ -158,6 +183,13 @@ cache that the harness cannot clear.
 - [x] Marker shapes: dot, ring, square, diamond
 - [x] Borders: `geometryPaths` turns any GeoJSON area into paths
 - [x] Heat map: `heatmap` builds a tint raster from weighted places
+- [x] Events: click, right click, hover, camera, and a draw hook for a custom WebGL layer
+- [x] Arcs and paths that draw themselves in and erase themselves, for an emit-on-click effect
+- [x] `pick` finds the arc under a point, for a highlight on hover
+- [x] `dotglobe/land`: a 7 kB land mask that ships with the package
+- [x] HTML labels with occlusion and declutter
+- [x] `toBlob` screenshot, WebGL context loss recovery, no drawing while out of view
+- [x] `imageLand` and `imageTint`: a land mask or a color for each dot from any equirectangular image
 - [x] Vanilla core, plus a React hook at `dotglobe/react`
 - [x] A demo page with real coastlines
 

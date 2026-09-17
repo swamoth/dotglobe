@@ -12,6 +12,7 @@
 import { program, texture, upload, type Program, type TextureOptions } from './gl';
 import type { View } from './camera';
 import { arcClearanceFor, centralAngle } from './geo';
+import { unitVector } from './fibonacci';
 import { rgb } from './sphere';
 import { unwrapRing, type AreaGeometry } from './landmask';
 
@@ -47,6 +48,14 @@ export interface Arc {
   color?: string;
   /** Opacity in 0..1. The default is 1. */
   opacity?: number;
+  /** Milliseconds to draw the arc in from its start, once it is set. The default is 0: at once. */
+  appear?: number;
+  /** Milliseconds to erase the arc from its start, after it has appeared. The default is 0: never. */
+  vanish?: number;
+  /** Milliseconds to wait before the arc appears. The default is 0. */
+  delay?: number;
+  /** Milliseconds to wait after the appear before the vanish starts. The default is 0. */
+  vanishDelay?: number;
 }
 
 /** Texels across each data texture. */
@@ -69,12 +78,15 @@ uniform sampler2D uEnds;
 uniform sampler2D uStyle;
 uniform sampler2D uColor;
 uniform sampler2D uDash;
+uniform sampler2D uAnim;
 uniform int uCols, uSegments;
+uniform float uTime;
 
 out vec4 vColor;
 out vec3 vWorld;
 out float vT;
 out vec3 vDash; // dash length, repeat length, travel
+out vec2 vClip; // the drawn part of the arc: from the tail to the head, as fractions
 
 const float PI = 3.141593;
 
@@ -98,6 +110,13 @@ void main() {
   vColor = texelFetch(uColor, at, 0);
   vec4 dash = texelFetch(uDash, at, 0);
   vDash = vec3(dash.x, max(dash.x + dash.y, 1e-6), dash.z);
+
+  // Appear and vanish. anim holds the start, the appear time, the vanish start, and the vanish
+  // time, in seconds of the globe clock. An arc with no animation is drawn whole.
+  vec4 anim = texelFetch(uAnim, at, 0);
+  float head = anim.y > 0.0 ? clamp((uTime - anim.x) / anim.y, 0.0, 1.0) : 1.0;
+  float tail = anim.w > 0.0 ? clamp((uTime - anim.z) / anim.w, 0.0, 1.0) : 0.0;
+  vClip = vec2(tail * tail, 1.0 - (1.0 - head) * (1.0 - head)); // ease in, and ease out
 
   int seg = gl_VertexID >> 1;
   float side = float(gl_VertexID & 1) * 2.0 - 1.0;
@@ -148,9 +167,11 @@ in vec4 vColor;
 in vec3 vWorld;
 in float vT;
 in vec3 vDash;
+in vec2 vClip;
 out vec4 fragColor;
 
 void main() {
+  if (vT < vClip.x || vT > vClip.y) discard;
   /*
    * Dashes. vDash holds the dash length, the repeat length, and how many repeats travel each
    * second. A solid arc has a dash as long as the repeat, so this never drops a fragment.
@@ -180,10 +201,13 @@ void main() {
 export interface ArcPass {
   /** Draws every arc. Returns false while the driver is still linking the shader. */
   draw(v: View, viewport: [number, number], seconds: number): boolean;
-  set(arcs: readonly Arc[]): void;
+  /** `now` is the globe clock in seconds, for an arc that appears. Null draws every arc whole. */
+  set(arcs: readonly Arc[], now?: number | null): void;
   readonly count: number;
   /** True when any arc has a dash pattern that travels, so the globe must keep drawing. */
   readonly animated: boolean;
+  /** Globe clock in seconds when the last arc finishes its appear or vanish. -Infinity for none. */
+  readonly until: number;
   destroy(): void;
 }
 
@@ -197,18 +221,22 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
   const ends = texture(gl, floatFormat);
   const style = texture(gl, floatFormat);
   const dash = texture(gl, floatFormat);
+  const anim = texture(gl, floatFormat);
   const color = texture(gl, colorFormat);
 
   let count = 0;
   let animated = false;
+  let until = -Infinity;
   upload(gl, ends, floatFormat, new Float32Array(4), 1, 1);
   upload(gl, style, floatFormat, new Float32Array(4), 1, 1);
   upload(gl, dash, floatFormat, new Float32Array([1, 0, 0, 0]), 1, 1);
+  upload(gl, anim, floatFormat, new Float32Array(4), 1, 1);
   upload(gl, color, colorFormat, new Uint8Array(4), 1, 1);
 
   return {
     get count() { return count; },
     get animated() { return animated; },
+    get until() { return until; },
     draw(v, viewport, seconds) {
       if (count === 0) return true;
       if (!prog.ready()) return false;
@@ -239,20 +267,25 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, dash);
       gl.uniform1i(u.uDash, 3);
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, anim);
+      gl.uniform1i(u.uAnim, 4);
 
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (segments + 1) * 2, count);
       gl.bindVertexArray(null);
       return true;
     },
-    set(arcs) {
+    set(arcs, now = null) {
       count = arcs.length;
       animated = false; // before the early return, or a removed dash keeps the loop awake
+      until = -Infinity;
       if (count === 0) return;
       const rows = Math.ceil(count / COLS);
       const cells = COLS * rows;
       const e = new Float32Array(cells * 4);
       const s = new Float32Array(cells * 4);
       const dashData = new Float32Array(cells * 4);
+      const animData = new Float32Array(cells * 4);
       const c = new Uint8Array(cells * 4);
       for (let i = 0; i < count; i++) {
         const arc = arcs[i];
@@ -271,6 +304,17 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
         dashData[i * 4 + 1] = arc.dashGap ?? 0;
         dashData[i * 4 + 2] = arc.dashSpeed ?? 0;
         if ((arc.dashSpeed ?? 0) !== 0 && (arc.dashGap ?? 0) > 0) animated = true;
+        if (now !== null && (arc.appear || arc.vanish)) {
+          const start = now + (arc.delay ?? 0) / 1000;
+          const appear = (arc.appear ?? 0) / 1000;
+          const vanishStart = start + appear + (arc.vanishDelay ?? 0) / 1000;
+          const vanish = (arc.vanish ?? 0) / 1000;
+          animData[i * 4] = start;
+          animData[i * 4 + 1] = appear;
+          animData[i * 4 + 2] = vanishStart;
+          animData[i * 4 + 3] = vanish;
+          until = Math.max(until, vanish > 0 ? vanishStart + vanish : start + appear);
+        }
         const [r, g, b] = arc.color ? rgb(arc.color) : [1, 1, 1];
         c[i * 4] = r * 255;
         c[i * 4 + 1] = g * 255;
@@ -280,6 +324,7 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       upload(gl, ends, floatFormat, e, COLS, rows);
       upload(gl, style, floatFormat, s, COLS, rows);
       upload(gl, dash, floatFormat, dashData, COLS, rows);
+      upload(gl, anim, floatFormat, animData, COLS, rows);
       upload(gl, color, colorFormat, c, COLS, rows);
     },
     destroy() {
@@ -288,6 +333,7 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
       gl.deleteTexture(ends);
       gl.deleteTexture(style);
       gl.deleteTexture(dash);
+      gl.deleteTexture(anim);
       gl.deleteTexture(color);
     },
   };
@@ -304,6 +350,12 @@ export interface Path {
   color?: string;
   /** Opacity in 0..1. The default is 1. */
   opacity?: number;
+  /** Milliseconds to draw the path in from its first point. The default is 0: at once. */
+  appear?: number;
+  /** Milliseconds to erase the path from its first point, after it has appeared. */
+  vanish?: number;
+  /** Milliseconds to wait before the path appears. */
+  delay?: number;
 }
 
 /**
@@ -316,7 +368,11 @@ export interface Path {
 export function pathSegments(paths: readonly Path[]): Arc[] {
   const out: Arc[] = [];
   for (const path of paths) {
-    for (let i = 1; i < path.points.length; i++) {
+    const n = path.points.length - 1;
+    // Each segment takes its share of the appear time, one after the other, so the whole path
+    // draws in from the first point at one speed. The vanish runs the same way.
+    const appear = (path.appear ?? 0) / n, vanish = (path.vanish ?? 0) / n;
+    for (let i = 1; i <= n; i++) {
       const a = path.points[i - 1];
       const b = path.points[i];
       out.push({
@@ -326,6 +382,9 @@ export function pathSegments(paths: readonly Path[]): Arc[] {
         altitude: path.altitude,
         color: path.color,
         opacity: path.opacity,
+        appear, vanish,
+        delay: (path.delay ?? 0) + appear * (i - 1),
+        vanishDelay: appear * (n - i) + vanish * (i - 1),
       });
     }
   }
@@ -365,4 +424,56 @@ export function geometryPaths(geometry: AreaGeometry, style: Omit<Path, 'points'
     }
   }
   return out;
+}
+
+/**
+ * The arc under a pixel, or -1. Each arc is sampled along its length with the same curve the
+ * shader draws, projected, and tested against the pixel as a chain of segments. An arc counts
+ * as hit within half its stroke plus a 4 pixel margin, and the nearest one wins.
+ *
+ * ponytail: every arc is sampled on every call, which is about 3 ms for 1000 arcs. A screen
+ * space index if a page picks that many on every pointer move.
+ */
+export function pickArc(arcs: readonly Arc[], v: View, x: number, y: number, width: number, height: number): number {
+  const STEPS = 24;
+  const [cx, cy, cz] = v.position;
+  const cc = cx * cx + cy * cy + cz * cz - 1;
+  let best = -1, bestDist = Infinity;
+  let px = 0, py = 0, pv = false;
+  for (let i = 0; i < arcs.length; i++) {
+    const arc = arcs[i];
+    const a = unitVector(arc.startLat, arc.startLng);
+    const b = unitVector(arc.endLat, arc.endLng);
+    const omega = Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
+    const sinOmega = Math.sin(omega);
+    const clearance = arc.clearance ?? arcClearanceFor(omega);
+    const alt = arc.altitude ?? 0.002, endAlt = arc.endAltitude ?? alt;
+    const reach = (arc.stroke ?? 2) / 2 + 4;
+    for (let s = 0; s <= STEPS; s++) {
+      const t = s / STEPS;
+      const wa = sinOmega < 1e-6 ? 1 - t : Math.sin((1 - t) * omega) / sinOmega;
+      const wb = sinOmega < 1e-6 ? t : Math.sin(t * omega) / sinOmega;
+      const r = 1 + alt + (endAlt - alt) * t + clearance * Math.sin(Math.PI * t);
+      const wx = (wa * a[0] + wb * b[0]) * r, wy = (wa * a[1] + wb * b[1]) * r, wz = (wa * a[2] + wb * b[2]) * r;
+      // Project, with the same occlusion test as the shader.
+      const rx = wx - cx, ry = wy - cy, rz = wz - cz;
+      const z = rx * v.forward[0] + ry * v.forward[1] + rz * v.forward[2];
+      const len = Math.hypot(rx, ry, rz);
+      const bb = (cx * rx + cy * ry + cz * rz) / len;
+      const disc = bb * bb - cc;
+      const visible = z > 1e-6 && !(disc > 0 && -bb - Math.sqrt(disc) > 0 && -bb - Math.sqrt(disc) < len - 1e-4);
+      const sx = (((rx * v.right[0] + ry * v.right[1] + rz * v.right[2]) / z) * (v.focal / v.aspect) * 0.5 + 0.5) * width;
+      const sy = (1 - (((rx * v.up[0] + ry * v.up[1] + rz * v.up[2]) / z) * v.focal * 0.5 + 0.5)) * height;
+      if (s > 0 && visible && pv) {
+        // Distance from the pixel to the segment from the last sample to this one.
+        const dx = sx - px, dy = sy - py;
+        const l2 = dx * dx + dy * dy;
+        const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - px) * dx + (y - py) * dy) / l2)) : 0;
+        const d = Math.hypot(x - (px + u * dx), y - (py + u * dy));
+        if (d < reach && d < bestDist) { bestDist = d; best = i; }
+      }
+      px = sx; py = sy; pv = visible;
+    }
+  }
+  return best;
 }

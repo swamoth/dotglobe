@@ -119,9 +119,9 @@ if (typeof mod.createGlobe !== 'function') {
     // Idle: with no input and no rotation, the globe must schedule no frame at all.
     let idleFrames = 0;
     const count = () => { idleFrames++; };
-    globe.onRender(count);
+    const stop = globe.on('render', count);
     await new Promise((r) => setTimeout(r, 1000));
-    globe.offRender(count);
+    stop();
 
     done({ firstFrameMs, coldContextMs, split, cpu, gpu, idleFrames, lit, markers, arcs });
     globe.destroy();

@@ -11,8 +11,8 @@
   #hud { position: absolute; left: 16px; top: 16px; pointer-events: none; }
   #hud b { color: #e6e6e6; font-weight: 500; letter-spacing: .04em; }
   #readout { margin-top: 6px; }
-  .pin { position: absolute; transform: translate(-50%, -100%); pointer-events: none; }
-  .pin span { display: block; padding: 2px 6px; border: 1px solid #2a2f38; border-radius: 3px; background: #14161a; color: #e6e6e6; white-space: nowrap; }
+  .label { margin-top: -18px; padding: 2px 6px; border: 1px solid #2a2f38; border-radius: 3px; background: #14161a; color: #e6e6e6; cursor: pointer; }
+  .label:hover { border-color: #7aa2f7; }
 
   /* Debug panel. Everything in it is a plain form control bound to one globe setter. */
   #debug { position: absolute; z-index: 1; right: 16px; top: 16px; width: 250px; max-height: calc(100% - 32px); overflow: auto; background: #14161add; border: 1px solid #2a2f38; border-radius: 4px; padding: 8px 10px; font-size: 12px; }
@@ -95,28 +95,11 @@ const globe = createGlobe(canvas, {
 const OFF_AT_START = new Set(['data', 'bars', 'borders', 'heat']);
 for (const name in LAYERS) if (!OFF_AT_START.has(name)) globe[SETTER[name]](LAYERS[name]);
 
-// One HTML element for each city, moved by project() on every frame.
-const pins = CITIES.map((c) => {
-  const el = document.createElement('div');
-  el.className = 'pin';
-  el.innerHTML = `<span>${c.name}</span>`;
-  stage.append(el);
-  return { city: c, el };
-});
-
-globe.onRender(() => {
-  for (const { city, el } of pins) {
-    const at = globe.project(city.lat, city.lng, 0.02);
-    // A point behind the camera has no screen position, and a point far outside the canvas has a
-    // large one. Moving an element there would stretch the page and raise scrollbars, so hide it.
-    const onScreen = at.visible && Number.isFinite(at.x)
-      && at.x > -200 && at.y > -200 && at.x < window.innerWidth + 200 && at.y < window.innerHeight + 200;
-    el.style.display = onScreen ? '' : 'none';
-    if (!onScreen) continue;
-    el.style.left = `${at.x}px`;
-    el.style.top = `${at.y}px`;
-  }
-});
+// Labels ride in an HTML layer that the globe keeps over the canvas. A label that the globe
+// covers hides, and so does one that would overlap a label with a higher priority.
+LAYERS.labels = CITIES.map((c, i) => ({ lat: c.lat, lng: c.lng, text: c.name, altitude: 0.02, priority: -i, className: 'label' }));
+SETTER.labels = 'setLabels';
+globe.setLabels(LAYERS.labels);
 
 // ---- Debug panel ---------------------------------------------------------------------------
 
@@ -189,6 +172,15 @@ for (const c of CITIES) {
   fly.querySelector('#fly').append(b);
 }
 
+const tools = document.createElement('label');
+tools.className = 'check';
+tools.innerHTML = '<span>tools</span><span id="fly"></span>';
+controls.append(tools);
+const tool = (name, fn) => { const b = document.createElement('button'); b.textContent = name; b.onclick = fn; tools.querySelector('#fly').append(b); };
+tool('screenshot', async () => window.open(URL.createObjectURL(await globe.toBlob('image/png'))));
+// The browser drops a WebGL context on its own at times. This button does it on purpose.
+tool('lose context', () => { const x = globe.gl.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 500); });
+
 section('layers');
 const DATA_DOTS = 20000;
 let seed = 7;
@@ -214,7 +206,7 @@ for (const name in LAYERS) check(name, !OFF_AT_START.has(name), (on) => {
 // Stats: frames in the last second, the lattice in use, and the camera. Refreshed once a second,
 // so the panel itself never becomes the thing that costs frames.
 let frames = 0;
-globe.onRender(() => { frames++; });
+globe.on('render', () => { frames++; });
 setInterval(() => {
   const v = view(globe.camera, canvas.clientWidth / canvas.clientHeight);
   const wanted = style.dotPitch > 0 ? dotsForPitch(v, canvas.height, style.dotPitch) : style.dots;
@@ -258,16 +250,41 @@ const highlight = (i) => {
   globe.setTint(entries.length ? countryTint(entries, 1024, 512) : null, 1024, 512);
 };
 
-canvas.addEventListener('pointermove', (e) => {
-  const hit = globe.pick(e.offsetX, e.offsetY);
+// The arc under the pointer turns white. The arcs are re-set only when the hovered one changes.
+let hoveredArc = -1;
+const emitted = []; // arcs a click added, each with the time it goes away
+const syncArcs = () => globe.setArcs([
+  ...LAYERS.arcs.map((a, i) => (i === hoveredArc ? { ...a, color: '#ffffff', stroke: 3 } : a)),
+  ...emitted.map((e) => e.arc),
+]);
+globe.on('hover', (hit) => {
   if (!hit) { readout.textContent = 'off the globe'; highlight(-1); return; }
   highlight(hit.country);
+  if (hit.arc !== hoveredArc && (hit.arc < LAYERS.arcs.length)) { hoveredArc = hit.arc; syncArcs(); }
+  if (Number.isNaN(hit.lat)) { readout.textContent = `arc ${hit.arc}, past the limb`; return; }
   const place = hit.country >= 0 ? names[hit.country] : 'ocean';
   const marker = hit.marker >= 0 ? ` — ${CITIES[hit.marker].name}` : '';
-  readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}`;
+  const arc = hit.arc >= 0 ? ` — arc ${hit.arc}` : '';
+  readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}${arc}`;
 });
+// A click on a marker flies there. A click elsewhere emits an arc from the nearest city, which
+// draws in, then erases from its start, then leaves the list. A ring marks the landing.
+globe.on('click', (hit) => {
+  if (!hit || Number.isNaN(hit.lat)) return;
+  if (hit.marker >= 0) { autoRotate = 0; globe.setAutoRotate(0); globe.flyTo({ lat: hit.lat, lng: hit.lng, altitude: 0.6 }, 900); return; }
+  const from = CITIES.reduce((a, b) => (Math.hypot(a.lat - hit.lat, a.lng - hit.lng) < Math.hypot(b.lat - hit.lat, b.lng - hit.lng) ? a : b));
+  const arc = { startLat: from.lat, startLng: from.lng, endLat: hit.lat, endLng: hit.lng, color: '#ff9e64', stroke: 2.5, appear: 900, vanish: 900, vanishDelay: 300 };
+  emitted.push({ arc, until: performance.now() + 2100 });
+  syncArcs();
+  globe.setRings([...LAYERS.rings, { lat: hit.lat, lng: hit.lng, maxRadius: 6, period: 2, width: 1, color: '#ff9e64', opacity: 0.9 }]);
+  setTimeout(() => {
+    for (let i = emitted.length; i--;) if (emitted[i].until <= performance.now()) emitted.splice(i, 1);
+    syncArcs();
+    globe.setRings(LAYERS.rings);
+  }, 2200);
+});
+globe.on('rightclick', (hit) => { if (hit) console.log('right click', hit.lat.toFixed(2), hit.lng.toFixed(2), names[hit.country] ?? 'ocean'); });
 
-canvas.addEventListener('pointerleave', () => highlight(-1));
 canvas.addEventListener('pointerdown', () => { autoRotate = 0; globe.setAutoRotate(0); });
 
 // Handy from the console: globe.pick(x, y), globe.project(lat, lng), globe.camera.
