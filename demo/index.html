@@ -2,44 +2,243 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>dotglobe</title>
+<meta name="description" content="A dot-matrix globe on WebGL2 in 17 kB. Markers, arcs, labels, heat maps, and a day-night line. No three.js.">
 <style>
-  :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; background: #0b0b0c; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9aa3b0; }
-  #stage { position: absolute; inset: 0; }
-  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-  #hud { position: absolute; left: 16px; top: 16px; pointer-events: none; }
-  #hud b { color: #e6e6e6; font-weight: 500; letter-spacing: .04em; }
-  #readout { margin-top: 6px; }
-  .label { margin-top: -18px; padding: 2px 6px; border: 1px solid #2a2f38; border-radius: 3px; background: #14161a; color: #e6e6e6; cursor: pointer; }
-  .label:hover { border-color: #7aa2f7; }
+  /*
+   * One dark theme, one accent, one radius. The globe is the only image on the page, and it is
+   * live: every section of the story sets its layers and moves its camera.
+   */
+  :root {
+    --bg: #0b0b0c;
+    --panel: #14161a;
+    --line: #23262d;
+    --fg: #e6e6e6;
+    --muted: #9aa3b0;
+    --accent: #ff7a45;
+    --radius: 6px;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--sans); scroll-behavior: smooth; }
+  body { margin: 0; }
+  a { color: inherit; text-decoration: none; }
+  h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+  p { margin: 0; color: var(--muted); max-width: 42ch; }
+  code, pre, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  pre { margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--fg); font-size: 13px; line-height: 1.6; overflow-x: auto; }
+  pre .k { color: var(--accent); }
+  pre .c { color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Navigation: one line, 60px. */
+  .nav { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; height: 60px; padding: 0 24px; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  .nav .mark { font-family: var(--mono); font-weight: 600; letter-spacing: 0.02em; }
+  .nav ul { display: flex; gap: 22px; margin: 0; padding: 0; list-style: none; font-size: 14px; color: var(--muted); }
+  .nav a:hover, .nav button:hover { color: var(--fg); }
+  .nav button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+
+  /* The story: text on the left, the globe pinned on the right. */
+  .story { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+  .stage { grid-column: 2; grid-row: 1; position: sticky; top: 60px; height: calc(100dvh - 60px); overflow: hidden; }
+  .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #readout { position: absolute; left: 20px; bottom: 16px; font: 12px/1.5 var(--mono); color: var(--muted); pointer-events: none; }
+  .chapters { grid-column: 1; grid-row: 1; padding: 0 24px 0 max(24px, calc((100vw - 1400px) / 2 + 24px)); }
+
+  .hero { min-height: calc(100dvh - 60px); display: flex; flex-direction: column; justify-content: center; padding: 48px 0 64px; max-width: 560px; }
+  .hero h1 { font-size: clamp(40px, 5.5vw, 68px); }
+  .hero p { margin-top: 20px; font-size: 18px; max-width: 34ch; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+  .btn { display: inline-flex; align-items: center; height: 42px; padding: 0 18px; border-radius: var(--radius); font-size: 15px; font-weight: 500; border: 1px solid var(--line); color: var(--fg); background: var(--panel); transition: transform .15s, border-color .15s; }
+  .btn:hover { border-color: var(--muted); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a0c05; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  /* Measured numbers, in a row over one hairline. */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 24px; padding: 28px 0; border-top: 1px solid var(--line); max-width: 760px; }
+  .stats b { display: block; font: 600 26px/1.1 var(--mono); letter-spacing: -0.02em; }
+  .stats span { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+  /* One chapter of the story. The one at the middle of the screen is the one the globe shows. */
+  .chapter { min-height: 82vh; display: flex; flex-direction: column; justify-content: center; padding: 48px 0; max-width: 560px; opacity: 0.38; transition: opacity .5s; }
+  .chapter.active { opacity: 1; }
+  .chapter h2 { font-size: clamp(26px, 3vw, 36px); }
+  .chapter p { margin-top: 14px; }
+  .chapter pre { margin-top: 22px; }
+
+  /* Install and the size comparison, in the same column, so the globe keeps them company. */
+  .install { padding: 64px 0; max-width: 560px; border-top: 1px solid var(--line); }
+  .install h2, .compare h2 { font-size: clamp(26px, 3vw, 36px); }
+  .install p { margin-top: 14px; }
+  .install pre { margin-top: 22px; }
+  .compare { padding: 64px 0 96px; max-width: 560px; border-top: 1px solid var(--line); }
+  .compare p { margin-top: 14px; }
+  .bars { margin: 28px 0 0; padding: 0; list-style: none; display: grid; gap: 14px; }
+  .bars li { display: grid; grid-template-columns: 130px 1fr 80px; align-items: center; gap: 12px; font-size: 14px; }
+  .bars i { display: block; height: 6px; border-radius: 3px; background: var(--muted); transform-origin: left; }
+  .bars li.us i { background: var(--accent); }
+  .bars li.us { color: var(--fg); font-weight: 600; }
+  .bars .num { text-align: right; color: var(--muted); }
+  .bars li.us .num { color: var(--fg); }
+
+  footer { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; padding: 24px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  footer a { color: var(--fg); }
+
+  /* Labels the globe places over the canvas. */
+  .label { margin-top: -18px; padding: 2px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--fg); font-size: 12px; cursor: pointer; }
+  .label:hover { border-color: var(--accent); }
 
   /* Debug panel. Everything in it is a plain form control bound to one globe setter. */
-  #debug { position: absolute; z-index: 1; right: 16px; top: 16px; width: 250px; max-height: calc(100% - 32px); overflow: auto; background: #14161add; border: 1px solid #2a2f38; border-radius: 4px; padding: 8px 10px; font-size: 12px; }
-  #debug summary { color: #e6e6e6; cursor: pointer; user-select: none; }
-  #debug h4 { margin: 10px 0 4px; font-size: 11px; font-weight: 500; color: #7aa2f7; text-transform: uppercase; letter-spacing: .06em; }
-  #debug label { display: grid; grid-template-columns: 76px 1fr 44px; align-items: center; gap: 6px; margin: 3px 0; }
+  #debug { position: fixed; z-index: 4; right: 16px; bottom: 16px; width: 250px; max-height: calc(100dvh - 92px); overflow: auto; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-size: 12px; }
+  #debug summary { color: var(--fg); cursor: pointer; user-select: none; }
+  #debug h4 { margin: 10px 0 4px; font-size: 11px; font-weight: 500; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }
+  #debug label { display: grid; grid-template-columns: 76px 1fr 44px; align-items: center; gap: 6px; margin: 3px 0; color: var(--muted); }
   #debug label.check { grid-template-columns: auto 1fr; }
   #debug input[type=range] { width: 100%; margin: 0; }
   #debug input[type=color] { width: 100%; height: 20px; padding: 0; border: 0; background: none; }
-  #debug output { text-align: right; color: #e6e6e6; font-variant-numeric: tabular-nums; }
-  #fly { display: flex; flex-wrap: wrap; gap: 4px; }
-  #fly button { font: inherit; font-size: 11px; padding: 1px 6px; background: #1c1f26; color: #e6e6e6; border: 1px solid #2a2f38; border-radius: 3px; cursor: pointer; }
-  #stats { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2a2f38; color: #e6e6e6; white-space: pre; font-variant-numeric: tabular-nums; }
+  #debug output { text-align: right; color: var(--fg); font-family: var(--mono); }
+  #debug .row { display: flex; flex-wrap: wrap; gap: 4px; }
+  #debug .row button { font: inherit; font-size: 11px; padding: 1px 6px; background: #1c1f26; color: var(--fg); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+  #stats { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--fg); white-space: pre; font-family: var(--mono); }
+
+  @media (max-width: 767px) {
+    .nav { padding: 0 16px; }
+    .nav ul { gap: 16px; }
+    .story { display: block; }
+    /* The text scrolls under the pinned globe, so the stage needs a solid back. */
+    .stage { position: sticky; top: 60px; height: 46dvh; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); }
+    .chapters { padding: 0 16px; }
+    .hero { min-height: 0; padding: 32px 0 40px; }
+    .hero h1 { font-size: 36px; }
+    .chapter { min-height: 0; padding: 40px 0; opacity: 1; }
+    .bars li { grid-template-columns: 110px 1fr 70px; }
+    #debug { width: calc(100vw - 32px); max-height: 50dvh; }
+    #debug:not([open]) { display: none; } /* the Debug link in the nav opens it */
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .chapter, .btn { transition: none; }
+  }
 </style>
-<div id="stage">
-  <canvas id="globe"></canvas>
-  <div id="hud"><b>dotglobe</b><div id="readout">loading coastlines</div></div>
-  <details id="debug" open><summary>debug</summary><div id="controls"></div><div id="stats"></div></details>
-</div>
+
+<header class="nav">
+  <a class="mark" href="#top">dotglobe</a>
+  <ul>
+    <li><a href="#story">Story</a></li>
+    <li><a href="#install">Install</a></li>
+    <li><button type="button" id="open-debug">Debug</button></li>
+  </ul>
+</header>
+
+<main class="story" id="story">
+  <div class="stage">
+    <canvas id="globe" role="img" aria-label="An interactive dot-matrix globe"></canvas>
+    <div id="readout">loading coastlines</div>
+  </div>
+
+  <div class="chapters">
+    <section class="hero" id="top">
+      <h1>A globe in 17 kB.</h1>
+      <p>A dot-matrix globe on WebGL2. Markers, arcs, labels, heat maps, and a day-night line. No three.js.</p>
+      <div class="actions">
+        <a class="btn primary" href="#install">Get started</a>
+        <a class="btn" href="#places">See the layers</a>
+      </div>
+    </section>
+
+    <div class="stats" aria-label="Measured numbers">
+      <div><b>17.5 kB</b><span>core, gzipped</span></div>
+      <div><b>0.2 ms</b><span>CPU for each frame</span></div>
+      <div><b>0</b><span>frames while idle</span></div>
+      <div><b>31x</b><span>smaller than react-globe.gl</span></div>
+    </div>
+
+    <section class="chapter" id="places" data-chapter="places">
+      <h2>Ten thousand markers cost one texture.</h2>
+      <p>A marker lives in a data texture, not a vertex buffer. One draw call covers every marker. Rings pulse from a place.</p>
+      <pre><span class="k">globe</span>.setMarkers([{ lat, lng, size: 0.012, shape: 'ring' }]);
+<span class="k">globe</span>.setRings([{ lat, lng, maxRadius: 9, period: 3 }]);</pre>
+    </section>
+
+    <section class="chapter" data-chapter="routes">
+      <h2>Arcs that draw themselves in.</h2>
+      <p>An arc is an instanced ribbon that keeps its width in pixels. It can appear, travel a dash, and erase itself. A path follows the surface.</p>
+      <pre><span class="k">globe</span>.setArcs([{ startLat, startLng, endLat, endLng, appear: 900 }]);
+<span class="k">globe</span>.setPaths([{ points, stroke: 1.5 }]);</pre>
+    </section>
+
+    <section class="chapter" data-chapter="data">
+      <h2>Data on the dots.</h2>
+      <p>Bin places onto the lattice. Each dot grows and takes a color from a ramp. Bars rise from a place.</p>
+      <pre><span class="k">globe</span>.setDotData(binPoints(places, 20000), 20000);
+<span class="k">globe</span>.setStyle({ dataColor: ['#6b7280', '#7aa2f7', '#ff7a45'] });</pre>
+    </section>
+
+    <section class="chapter" data-chapter="regions">
+      <h2>Regions, borders, and a heat map.</h2>
+      <p>Blur places into a heat map. Outline any GeoJSON area. Hover to name the country under the pointer.</p>
+      <pre><span class="k">globe</span>.setTint(heatmap(places, 1024, 512), 1024, 512);
+<span class="k">globe</span>.setPaths(geometryPaths(country.geometry));</pre>
+    </section>
+
+    <section class="chapter" data-chapter="labels">
+      <h2>Labels that hide when they should.</h2>
+      <p>A label is an HTML element that follows a place. It hides behind the globe and yields to a label with a higher priority. Click the globe to send an arc.</p>
+      <pre><span class="k">globe</span>.setLabels([{ lat, lng, text: 'London', priority: 2 }]);
+<span class="k">globe</span>.on('click', (hit) => <span class="c">/* hit.lat, hit.lng, hit.country */</span>);</pre>
+    </section>
+
+    <section class="chapter" data-chapter="time">
+      <h2>Night falls where the sun says.</h2>
+      <p>Put the sun over a place, or over where it is right now. Add a graticule. Nothing here moves on its own when the OS asks for less motion.</p>
+      <pre><span class="k">globe</span>.setSun(new Date());
+<span class="k">globe</span>.setStyle({ night: 0.85, graticule: 15 });</pre>
+    </section>
+
+    <section class="install" id="install">
+      <h2>Install</h2>
+      <p>One package, no dependency. A land mask ships with it, so the first globe needs no data.</p>
+      <pre>npm install dotglobe</pre>
+      <pre><span class="k">import</span> { createGlobe } <span class="k">from</span> 'dotglobe';
+<span class="k">import</span> { land } <span class="k">from</span> 'dotglobe/land';
+
+<span class="k">const</span> globe = createGlobe(canvas, { autoRotate: 6 });
+globe.setLand(...<span class="k">await</span> land());
+globe.setMarkers([{ lat: 51.5, lng: -0.13, color: '#ff7a45' }]);</pre>
+    </section>
+
+    <section class="compare" id="compare">
+      <h2>Against the stack it replaces</h2>
+      <p>Gzipped bundle size, measured with the same build. The globe library, and what it pulls in.</p>
+      <ul class="bars">
+        <li><span>react-globe.gl</span><i style="transform: scaleX(1)"></i><span class="num">544.8 kB</span></li>
+        <li><span>globe.gl</span><i style="transform: scaleX(0.995)"></i><span class="num">542.0 kB</span></li>
+        <li><span>three-globe</span><i style="transform: scaleX(0.836)"></i><span class="num">455.5 kB</span></li>
+        <li><span>three</span><i style="transform: scaleX(0.341)"></i><span class="num">185.9 kB</span></li>
+        <li class="us"><span>dotglobe</span><i style="transform: scaleX(0.032)"></i><span class="num">17.5 kB</span></li>
+      </ul>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span>MIT license. A rewrite in the spirit of <a href="https://cobe.vercel.app/">COBE</a>.</span>
+  <span>Drag to turn. Scroll on the globe to zoom. Arrow keys turn, + and - zoom.</span>
+</footer>
+
+<details id="debug"><summary>debug</summary><div id="controls"></div><div id="stats"></div></details>
+
 <script type="module">
-import { createGlobe, landMask, countryTint, binPoints, heatmap, geometryPaths, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
+import { createGlobe, landMask, countryTint, binPoints, heatmap, geometryPaths, subsolarPoint, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
+import { land } from '../dist/land.js';
 import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 
 const COLS = 2048, ROWS = 1024;
 const canvas = document.getElementById('globe');
 const readout = document.getElementById('readout');
-const stage = document.getElementById('stage');
 
 const CITIES = [
   { name: 'London', lat: 51.5074, lng: -0.1278 },
@@ -66,47 +265,173 @@ const route = (a, b, n = 24) => {
   return pts;
 };
 
-// Layer data, kept so the debug toggles can put a layer back after removing it.
+// Places, clustered around the cities. The same set feeds the marker cloud, the dot data, and
+// the heat map.
+let seed = 7;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 2;
+const samples = [];
+for (let i = 0; i < 10000; i++) {
+  const c = CITIES[i % CITIES.length];
+  samples.push({ lat: c.lat + gauss() * 6, lng: c.lng + gauss() * 8, weight: 0.5 + rnd() });
+}
+const DATA_DOTS = 20000;
+
+// Layer data, kept so the story and the debug toggles can put a layer back after removing it.
 const LAYERS = {
-  markers: CITIES.map((c, i) => ({ ...c, size: 0.014, color: '#ff5533', shape: ['dot', 'ring', 'square', 'diamond'][i % 4] })),
-  rings: CITIES.slice(0, 3).map((c) => ({ lat: c.lat, lng: c.lng, maxRadius: 9, width: 1.2, period: 3, color: '#ff5533', opacity: 0.9 })),
+  markers: CITIES.map((c, i) => ({ ...c, size: 0.014, color: '#ff7a45', shape: ['dot', 'ring', 'square', 'diamond'][i % 4] })),
+  cloud: samples.map((p) => ({ lat: p.lat, lng: p.lng, size: 0.003, color: '#e6e6e6', opacity: 0.55 })),
+  rings: CITIES.slice(0, 3).map((c) => ({ lat: c.lat, lng: c.lng, maxRadius: 9, width: 1.2, period: 3, color: '#ff7a45', opacity: 0.9 })),
   arcs: [
-    { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#7aa2f7' },
-    { startLat: -23.5505, startLng: -46.6333, endLat: -1.2921, endLng: 36.8219, color: '#7aa2f7' },
-    { startLat: 12.9716, startLng: 77.5946, endLat: -33.8688, endLng: 151.2093, color: '#7aa2f7' },
-    { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#9ece6a', dashLength: 0.04, dashGap: 0.03, dashSpeed: 0.35 },
+    { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#c9cfd8' },
+    { startLat: -23.5505, startLng: -46.6333, endLat: -1.2921, endLng: 36.8219, color: '#c9cfd8' },
+    { startLat: 12.9716, startLng: 77.5946, endLat: -33.8688, endLng: 151.2093, color: '#c9cfd8' },
+    { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#ff7a45', dashLength: 0.04, dashGap: 0.03, dashSpeed: 0.35 },
   ],
-  bars: CITIES.map((c, i) => ({ lat: c.lat, lng: c.lng, height: 0.08 + 0.05 * (i % 3), stroke: 5, color: '#9ece6a', opacity: 0.9 })),
+  bars: CITIES.map((c, i) => ({ lat: c.lat, lng: c.lng, height: 0.08 + 0.05 * (i % 3), stroke: 5, color: '#ff7a45', opacity: 0.9 })),
   borders: [],
   paths: [
-    { points: route([51.5074, -0.1278], [40.71, -74.01]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
-    { points: route([-33.87, 151.21], [1.29, 103.85]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
+    { points: route([51.5074, -0.1278], [40.71, -74.01]), stroke: 1.5, color: '#c9cfd8', opacity: 0.85 },
+    { points: route([-33.87, 151.21], [1.29, 103.85]), stroke: 1.5, color: '#c9cfd8', opacity: 0.85 },
   ],
+  labels: CITIES.map((c, i) => ({ lat: c.lat, lng: c.lng, text: c.name, altitude: 0.02, priority: -i, className: 'label' })),
+  data: binPoints(samples, DATA_DOTS),
+  heat: heatmap(samples, 1024, 512, { radius: 5, color: '#ff7a45' }),
 };
-const SETTER = { markers: 'setMarkers', rings: 'setRings', arcs: 'setArcs', paths: 'setPaths', bars: 'setBars', borders: 'setPaths', heat: 'setTint' };
-// Cable paths and borders share one pass, so one call composes both from what is switched on.
-const shown = { paths: true, borders: false };
-const syncPaths = () => globe.setPaths([...(shown.paths ? LAYERS.paths : []), ...(shown.borders ? LAYERS.borders : [])]);
 
 const globe = createGlobe(canvas, {
   camera: { lat: 20, lng: 12, altitude: 1.7 },
   autoRotate: 4,
+  // A ramp: a dot with data takes the color at its value. The low end stays close to the dot color.
+  style: { dataColor: ['#6b7280', '#7aa2f7', '#ff7a45', '#fff1c1'] },
 });
-const OFF_AT_START = new Set(['data', 'bars', 'borders', 'heat']);
-for (const name in LAYERS) if (!OFF_AT_START.has(name)) globe[SETTER[name]](LAYERS[name]);
+window.globe = globe; // handy from the console: globe.pick(x, y), globe.project(lat, lng), globe.camera
 
-// Labels ride in an HTML layer that the globe keeps over the canvas. A label that the globe
-// covers hides, and so does one that would overlap a label with a higher priority.
-LAYERS.labels = CITIES.map((c, i) => ({ lat: c.lat, lng: c.lng, text: c.name, altitude: 0.02, priority: -i, className: 'label' }));
-SETTER.labels = 'setLabels';
-globe.setLabels(LAYERS.labels);
+// The 7 kB mask that ships with the package paints the first frame. The sharp 2048 mask from the
+// country polygons replaces it a moment later.
+globe.setLand(...await land());
+
+// ---- The story ------------------------------------------------------------------------------
+
+// The globe column is narrow on some screens. Keep the whole disc inside it.
+const fit = (altitude) => Math.max(altitude, 2.4 / (canvas.clientWidth / canvas.clientHeight) - 1);
+const go = (lat, lng, altitude, ms = 1400) => globe.flyTo({ lat, lng, altitude: fit(altitude) }, ms);
+let autoRotate = 4;
+const spin = (v) => { autoRotate = v; globe.setAutoRotate(v); };
+
+/** Clear every layer, then a chapter adds its own. */
+function base() {
+  globe.setMarkers([]); globe.setRings([]); globe.setArcs([]); globe.setPaths([]); globe.setBars([]);
+  globe.setLabels([]); globe.setDotData(null, DATA_DOTS); globe.setTint(null, 1024, 512);
+  globe.setStyle({ night: 0, graticule: 0 });
+  spin(4);
+}
+
+const CHAPTERS = {
+  hero() {
+    base();
+    globe.setMarkers(LAYERS.markers); globe.setArcs(LAYERS.arcs); globe.setLabels(LAYERS.labels);
+    go(20, 12, 1.7);
+  },
+  places() {
+    base();
+    globe.setMarkers([...LAYERS.cloud, ...LAYERS.markers]); globe.setRings(LAYERS.rings);
+    go(30, 20, 1.3);
+  },
+  routes() {
+    base();
+    globe.setArcs(LAYERS.arcs.map((a, i) => ({ ...a, appear: 900, delay: i * 180 })));
+    globe.setPaths(LAYERS.paths.map((p, i) => ({ ...p, appear: 1200, delay: 600 + i * 300 })));
+    go(25, -20, 1.6);
+  },
+  data() {
+    base();
+    globe.setDotData(LAYERS.data, DATA_DOTS); globe.setBars(LAYERS.bars);
+    go(15, 70, 1.4);
+  },
+  regions() {
+    base();
+    globe.setTint(LAYERS.heat, 1024, 512); globe.setPaths(LAYERS.borders);
+    go(10, 25, 1.4);
+  },
+  labels() {
+    base();
+    globe.setMarkers(LAYERS.markers); globe.setLabels(LAYERS.labels);
+    go(38, 15, 1.1);
+  },
+  time() {
+    base();
+    globe.setMarkers(LAYERS.markers); globe.setSun(new Date()); globe.setStyle({ night: 0.85, graticule: 15 });
+    // Look at the evening side, so the day-night line crosses the middle of the disc.
+    const sun = subsolarPoint(new Date());
+    go(20, sun.lng + 55, 1.7); spin(3);
+  },
+};
+
+// The chapter at the middle of the screen drives the globe. The hero counts as a chapter too.
+const chapters = [...document.querySelectorAll('.hero, .chapter')];
+let current = null;
+const watcher = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    const name = e.target.dataset.chapter ?? 'hero';
+    if (name === current) continue;
+    current = name;
+    chapters.forEach((c) => c.classList.toggle('active', c === e.target));
+    CHAPTERS[name]();
+  }
+}, { rootMargin: '-45% 0px -45% 0px' });
+chapters.forEach((c) => watcher.observe(c));
+
+// ---- Pointer events --------------------------------------------------------------------------
+
+let names = [];
+let countries = [];
+let hovered = -1;
+const highlight = (i) => {
+  if (i === hovered || current === 'regions' || current === 'data') return; // those chapters own the tint
+  hovered = i;
+  const entries = i >= 0 ? [{ geometry: countries[i].geometry, color: 'rgba(255, 122, 69, 0.45)' }] : [];
+  globe.setTint(entries.length ? countryTint(entries, 1024, 512) : null, 1024, 512);
+};
+
+globe.on('hover', (hit) => {
+  if (!hit) { readout.textContent = ''; highlight(-1); return; }
+  if (Number.isNaN(hit.lat)) { readout.textContent = `arc ${hit.arc}`; return; }
+  highlight(hit.country);
+  const place = hit.country >= 0 ? names[hit.country] : 'ocean';
+  const city = hit.marker >= 0 && current !== 'places' ? `  ${CITIES[hit.marker].name}` : '';
+  const line = hit.arc >= 0 ? `  arc ${hit.arc}` : hit.path >= 0 ? `  path ${hit.path}` : '';
+  readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)}  ${place}${city}${line}`;
+});
+
+// A click sends an arc from the nearest city to the place. It draws in, then erases itself.
+const emitted = [];
+const chapterArcs = () => (current === 'hero' ? LAYERS.arcs : []);
+const chapterRings = () => (current === 'places' ? LAYERS.rings : []);
+globe.on('click', (hit) => {
+  if (!hit || Number.isNaN(hit.lat)) return;
+  spin(0);
+  const from = CITIES.reduce((a, b) => (Math.hypot(a.lat - hit.lat, a.lng - hit.lng) < Math.hypot(b.lat - hit.lat, b.lng - hit.lng) ? a : b));
+  const arc = { startLat: from.lat, startLng: from.lng, endLat: hit.lat, endLng: hit.lng, color: '#ff7a45', stroke: 2.5, appear: 900, vanish: 900, vanishDelay: 300 };
+  emitted.push({ arc, until: performance.now() + 2100 });
+  globe.setArcs([...chapterArcs(), ...emitted.map((e) => e.arc)]);
+  globe.setRings([...chapterRings(), { lat: hit.lat, lng: hit.lng, maxRadius: 6, period: 2, width: 1, color: '#ff7a45', opacity: 0.9 }]);
+  setTimeout(() => {
+    for (let i = emitted.length; i--;) if (emitted[i].until <= performance.now()) emitted.splice(i, 1);
+    globe.setArcs([...chapterArcs(), ...emitted.map((e) => e.arc)]);
+    globe.setRings(chapterRings());
+  }, 2200);
+});
+canvas.addEventListener('pointerdown', () => spin(0));
 
 // ---- Debug panel ---------------------------------------------------------------------------
 
+const debug = document.getElementById('debug');
+document.getElementById('open-debug').onclick = () => { debug.open = !debug.open; };
 const controls = document.getElementById('controls');
 const stats = document.getElementById('stats');
 const style = { ...DEFAULT_STYLE };
-let autoRotate = 4;
 
 const section = (title) => controls.insertAdjacentHTML('beforeend', `<h4>${title}</h4>`);
 
@@ -138,6 +463,15 @@ function check(name, initial, set) {
   controls.append(label);
 }
 
+/** A row of buttons. Returns a function that adds one. */
+function row(title) {
+  const label = document.createElement('label');
+  label.className = 'check';
+  label.innerHTML = `<span>${title}</span><span class="row"></span>`;
+  controls.append(label);
+  return (name, fn) => { const b = document.createElement('button'); b.textContent = name; b.onclick = fn; label.querySelector('.row').append(b); };
+}
+
 const styleRange = (name, min, max, step) =>
   range(name, min, max, step, () => style[name], (v) => { style[name] = v; globe.setStyle({ [name]: v }); });
 
@@ -155,63 +489,37 @@ styleRange('night', 0, 1, 0.05);
 styleRange('graticule', 0, 30, 5);
 styleRange('graticuleOpacity', 0, 1, 0.05);
 color('base'); color('dot'); color('glow');
-globe.setSun(new Date()); // where the sun is right now, shown once night is above 0
+globe.setSun(new Date());
 
 section('camera');
 const altitude = range('altitude', 0.15, 4, 0.01, () => globe.camera.altitude, (v) => globe.setCamera({ altitude: v }));
 const latitude = range('lat', -89, 89, 1, () => globe.camera.lat, (v) => globe.setCamera({ lat: v }));
-range('autoRotate', 0, 40, 1, () => autoRotate, (v) => { autoRotate = v; globe.setAutoRotate(v); });
-const fly = document.createElement('label');
-fly.className = 'check';
-fly.innerHTML = '<span>fly to</span><span id="fly"></span>';
-controls.append(fly);
-for (const c of CITIES) {
-  const b = document.createElement('button');
-  b.textContent = c.name;
-  b.onclick = () => { autoRotate = 0; globe.setAutoRotate(0); globe.flyTo({ lat: c.lat, lng: c.lng, altitude: 0.9 }, 1200); };
-  fly.querySelector('#fly').append(b);
-}
-
-const tools = document.createElement('label');
-tools.className = 'check';
-tools.innerHTML = '<span>tools</span><span id="fly"></span>';
-controls.append(tools);
-const tool = (name, fn) => { const b = document.createElement('button'); b.textContent = name; b.onclick = fn; tools.querySelector('#fly').append(b); };
+range('autoRotate', 0, 40, 1, () => autoRotate, (v) => spin(v));
+const flyTo = row('fly to');
+for (const c of CITIES) flyTo(c.name, () => { spin(0); globe.flyTo({ lat: c.lat, lng: c.lng, altitude: fit(0.9) }, 1200); });
+const tool = row('tools');
 tool('screenshot', async () => window.open(URL.createObjectURL(await globe.toBlob('image/png'))));
 // The browser drops a WebGL context on its own at times. This button does it on purpose.
 tool('lose context', () => { const x = globe.gl.getExtension('WEBGL_lose_context'); x.loseContext(); setTimeout(() => x.restoreContext(), 500); });
 
 section('layers');
-const DATA_DOTS = 20000;
-let seed = 7;
-const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
-const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 2;
-const samples = [];
-for (let i = 0; i < 3000; i++) {
-  const c = CITIES[i % CITIES.length];
-  samples.push({ lat: c.lat + gauss() * 6, lng: c.lng + gauss() * 8, weight: 0.5 + rnd() });
-}
-LAYERS.data = binPoints(samples, DATA_DOTS);
-LAYERS.heat = heatmap(samples, 1024, 512, { radius: 5, color: '#ff7a45' });
-const realSetTint = globe.setTint.bind(globe);
-globe.setTint = (v) => realSetTint(v, 1024, 512);
-SETTER.data = 'setDotData';
-const realSetDotData = globe.setDotData.bind(globe);
-globe.setDotData = (v) => realSetDotData(v && v.length ? v : null, DATA_DOTS);
-for (const name in LAYERS) check(name, !OFF_AT_START.has(name), (on) => {
-  if (name === 'paths' || name === 'borders') { shown[name] = on; syncPaths(); return; }
-  globe[SETTER[name]](on ? LAYERS[name] : (name === 'heat' ? null : []));
+const SETTER = { markers: 'setMarkers', cloud: 'setMarkers', rings: 'setRings', arcs: 'setArcs', paths: 'setPaths', bars: 'setBars', borders: 'setPaths', labels: 'setLabels' };
+for (const name of Object.keys(SETTER)) check(name, false, (on) => {
+  if (name === 'cloud') { globe.setMarkers(on ? [...LAYERS.cloud, ...LAYERS.markers] : LAYERS.markers); return; }
+  globe[SETTER[name]](on ? LAYERS[name] : []);
 });
+check('data', false, (on) => globe.setDotData(on ? LAYERS.data : null, DATA_DOTS));
+check('heat', false, (on) => globe.setTint(on ? LAYERS.heat : null, 1024, 512));
 
 // Stats: frames in the last second, the lattice in use, and the camera. Refreshed once a second,
-// so the panel itself never becomes the thing that costs frames.
+// and only while the panel is open, so the panel never becomes the thing that costs frames.
 let frames = 0;
 globe.on('render', () => { frames++; });
 setInterval(() => {
+  if (!debug.open) { frames = 0; return; }
   const v = view(globe.camera, canvas.clientWidth / canvas.clientHeight);
   const wanted = style.dotPitch > 0 ? dotsForPitch(v, canvas.height, style.dotPitch) : style.dots;
-  const dataOn = [...document.querySelectorAll('#debug label.check')].some((l) => l.textContent.trim() === 'data' && l.querySelector('input').checked);
-  const dots = dataOn ? DATA_DOTS : Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
+  const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
   const { lat, lng, altitude: alt } = globe.camera;
   stats.textContent = [
     `fps       ${String(frames).padStart(4)}   (0 when idle)`,
@@ -226,68 +534,16 @@ setInterval(() => {
 // ---- Coastlines ---------------------------------------------------------------------------
 
 const topo = await fetch('./countries-110m.json').then((r) => r.json());
-const countries = feature(topo, topo.objects.countries).features
+countries = feature(topo, topo.objects.countries).features
   .filter((f) => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
-const names = countries.map((f) => f.properties?.name ?? String(f.id));
+names = countries.map((f) => f.properties?.name ?? String(f.id));
 
-const started = performance.now();
 globe.setLand(landMask(countries.map((f) => f.geometry), COLS, ROWS), COLS, ROWS);
 globe.setCountries(countries.map((f) => f.geometry));
 LAYERS.borders = countries.flatMap((f) => geometryPaths(f.geometry, { stroke: 1, color: '#7aa2f7', opacity: 0.6 }));
-const maskMs = performance.now() - started;
+if (current === 'regions') globe.setPaths(LAYERS.borders);
 
 await globe.ready;
-readout.textContent = `${countries.length} countries, mask built in ${maskMs.toFixed(0)} ms. Drag to turn, scroll to zoom.`;
-
-// Hover highlight. The tint map is repainted only when the country under the cursor changes.
-let hovered = -1;
-const highlight = (i) => {
-  if (i === hovered) return;
-  // The heat map and the hover highlight share the tint texture. Heat wins while it is on.
-  if (document.querySelector('#debug label.check input:checked') && [...document.querySelectorAll('#debug label.check')].some((l) => l.textContent.trim() === 'heat' && l.querySelector('input').checked)) return;
-  hovered = i;
-  const entries = i >= 0 ? [{ geometry: countries[i].geometry, color: 'rgba(122, 162, 247, 0.55)' }] : [];
-  globe.setTint(entries.length ? countryTint(entries, 1024, 512) : null, 1024, 512);
-};
-
-// The arc under the pointer turns white. The arcs are re-set only when the hovered one changes.
-let hoveredArc = -1;
-const emitted = []; // arcs a click added, each with the time it goes away
-const syncArcs = () => globe.setArcs([
-  ...LAYERS.arcs.map((a, i) => (i === hoveredArc ? { ...a, color: '#ffffff', stroke: 3 } : a)),
-  ...emitted.map((e) => e.arc),
-]);
-globe.on('hover', (hit) => {
-  if (!hit) { readout.textContent = 'off the globe'; highlight(-1); return; }
-  highlight(hit.country);
-  if (hit.arc !== hoveredArc && (hit.arc < LAYERS.arcs.length)) { hoveredArc = hit.arc; syncArcs(); }
-  if (Number.isNaN(hit.lat)) { readout.textContent = `arc ${hit.arc}, past the limb`; return; }
-  const place = hit.country >= 0 ? names[hit.country] : 'ocean';
-  const marker = hit.marker >= 0 ? ` — ${CITIES[hit.marker].name}` : '';
-  const arc = hit.arc >= 0 ? ` — arc ${hit.arc}` : '';
-  readout.textContent = `${hit.lat.toFixed(1)}, ${hit.lng.toFixed(1)} — ${place}${marker}${arc}`;
-});
-// A click on a marker flies there. A click elsewhere emits an arc from the nearest city, which
-// draws in, then erases from its start, then leaves the list. A ring marks the landing.
-globe.on('click', (hit) => {
-  if (!hit || Number.isNaN(hit.lat)) return;
-  if (hit.marker >= 0) { autoRotate = 0; globe.setAutoRotate(0); globe.flyTo({ lat: hit.lat, lng: hit.lng, altitude: 0.6 }, 900); return; }
-  const from = CITIES.reduce((a, b) => (Math.hypot(a.lat - hit.lat, a.lng - hit.lng) < Math.hypot(b.lat - hit.lat, b.lng - hit.lng) ? a : b));
-  const arc = { startLat: from.lat, startLng: from.lng, endLat: hit.lat, endLng: hit.lng, color: '#ff9e64', stroke: 2.5, appear: 900, vanish: 900, vanishDelay: 300 };
-  emitted.push({ arc, until: performance.now() + 2100 });
-  syncArcs();
-  globe.setRings([...LAYERS.rings, { lat: hit.lat, lng: hit.lng, maxRadius: 6, period: 2, width: 1, color: '#ff9e64', opacity: 0.9 }]);
-  setTimeout(() => {
-    for (let i = emitted.length; i--;) if (emitted[i].until <= performance.now()) emitted.splice(i, 1);
-    syncArcs();
-    globe.setRings(LAYERS.rings);
-  }, 2200);
-});
-globe.on('rightclick', (hit) => { if (hit) console.log('right click', hit.lat.toFixed(2), hit.lng.toFixed(2), names[hit.country] ?? 'ocean'); });
-
-canvas.addEventListener('pointerdown', () => { autoRotate = 0; globe.setAutoRotate(0); });
-
-// Handy from the console: globe.pick(x, y), globe.project(lat, lng), globe.camera.
-window.globe = globe;
+readout.textContent = '';
 </script>
 </html>
