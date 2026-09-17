@@ -76,7 +76,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 12.8 kB |
+| Core bundle, gzipped | under 20 kB | 14.2 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -111,7 +111,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **34.5 kB** | **12.8 kB** |
+| **dotglobe** | **38.3 kB** | **14.2 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
@@ -152,6 +152,12 @@ cache that the harness cannot clear.
 - [x] `flyTo` with an ease in and out, pinch zoom, and keyboard control
 - [x] `prefers-reduced-motion`: nothing moves on its own when the OS asks
 - [x] A day and night terminator, with the sun placed by a date
+- [x] Graticules
+- [x] Per-dot data: a value for each lattice dot sets its size and color. `binPoints` builds it from places, which is the hex-bin of a dot globe
+- [x] Bars that rise from a place
+- [x] Marker shapes: dot, ring, square, diamond
+- [x] Borders: `geometryPaths` turns any GeoJSON area into paths
+- [x] Heat map: `heatmap` builds a tint raster from weighted places
 - [x] Vanilla core, plus a React hook at `dotglobe/react`
 - [x] A demo page with real coastlines
 

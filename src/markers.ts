@@ -24,7 +24,11 @@ export interface Marker {
   color?: string;
   /** Opacity in 0..1. The default is 1. */
   opacity?: number;
+  /** The default is a dot. */
+  shape?: 'dot' | 'ring' | 'square' | 'diamond';
 }
+
+const SHAPES = { dot: 0, ring: 1, square: 2, diamond: 3 };
 
 /** Texels across the data texture. A taller texture holds more markers. */
 const COLS = 1024;
@@ -40,6 +44,7 @@ uniform int uCols;
 
 out vec2 vCorner;
 out vec4 vColor;
+out float vShape;
 
 const float PI = 3.141593;
 
@@ -47,6 +52,9 @@ void main() {
   ivec2 at = ivec2(gl_InstanceID % uCols, gl_InstanceID / uCols);
   vec4 d = texelFetch(uData, at, 0);
   vColor = texelFetch(uColor, at, 0);
+  // The shape rides in the altitude channel as tens, because an altitude never reaches 10.
+  vShape = floor(d.w / 10.0);
+  d.w -= vShape * 10.0;
 
   // The corners of the quad, in strip order.
   vCorner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1)) * 2.0 - 1.0;
@@ -85,13 +93,20 @@ precision highp float;
 
 in vec2 vCorner;
 in vec4 vColor;
+in float vShape;
 out vec4 fragColor;
 
 void main() {
-  // A round dot from a square quad. The derivative keeps the edge one pixel wide at any size.
-  float d = length(vCorner);
+  // A shape from a square quad, as a distance field. The derivative keeps every edge one pixel
+  // wide at any size. 0 dot, 1 ring, 2 square, 3 diamond.
+  int shape = int(vShape + 0.5);
+  float d = shape == 2 ? max(abs(vCorner.x), abs(vCorner.y))
+          : shape == 3 ? abs(vCorner.x) + abs(vCorner.y)
+          : length(vCorner);
   float aa = fwidth(d);
-  float alpha = (1.0 - smoothstep(1.0 - aa, 1.0, d)) * vColor.a;
+  float alpha = 1.0 - smoothstep(1.0 - aa, 1.0, d);
+  if (shape == 1) alpha *= smoothstep(0.62 - aa, 0.62, d); // hollow, with a wall about 0.38 wide
+  alpha *= vColor.a;
   if (alpha <= 0.0) discard;
   fragColor = vec4(vColor.rgb * alpha, alpha); // premultiplied
 }`;
@@ -158,7 +173,7 @@ export function createMarkerPass(gl: WebGL2RenderingContext): MarkerPass {
         d[i * 4] = m.lat;
         d[i * 4 + 1] = m.lng;
         d[i * 4 + 2] = m.size ?? 0.01;
-        d[i * 4 + 3] = m.altitude ?? 0;
+        d[i * 4 + 3] = (m.altitude ?? 0) + SHAPES[m.shape ?? 'dot'] * 10;
         const [r, g, b] = m.color ? rgb(m.color) : [1, 1, 1];
         c[i * 4] = r * 255;
         c[i * 4 + 1] = g * 255;

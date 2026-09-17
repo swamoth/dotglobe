@@ -13,6 +13,7 @@ import { program, texture, upload, type Program, type TextureOptions } from './g
 import type { View } from './camera';
 import { arcClearanceFor, centralAngle } from './geo';
 import { rgb } from './sphere';
+import { unwrapRing, type AreaGeometry } from './landmask';
 
 export interface Arc {
   startLat: number;
@@ -31,6 +32,8 @@ export interface Arc {
    * lifts the ribbon clear of the surface so the occlusion test cannot drop it against itself.
    */
   altitude?: number;
+  /** Height at the far end, in globe radii. Defaults to `altitude`. A bar sets this higher. */
+  endAltitude?: number;
   /**
    * Length of one dash, as a fraction of the arc. The default is 1, which draws a solid line.
    * A dash and a gap together make the repeat, so 0.1 and 0.1 gives ten dashes over the arc.
@@ -118,8 +121,8 @@ void main() {
     p2 = (sin((1.0 - t2) * omega) * a + sin(t2 * omega) * b) / sinOmega;
   }
   // A half sine is 0 at both ends and never negative, thus an arc never cuts into the sphere.
-  vec3 w1 = p1 * (1.0 + style.z + style.x * sin(PI * t));
-  vec3 w2 = p2 * (1.0 + style.z + style.x * sin(PI * t2));
+  vec3 w1 = p1 * (1.0 + mix(style.z, style.w, t) + style.x * sin(PI * t));
+  vec3 w2 = p2 * (1.0 + mix(style.z, style.w, t2) + style.x * sin(PI * t2));
   vWorld = w1;
 
   vec3 s1 = toScreen(w1);
@@ -243,13 +246,13 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
     },
     set(arcs) {
       count = arcs.length;
+      animated = false; // before the early return, or a removed dash keeps the loop awake
       if (count === 0) return;
       const rows = Math.ceil(count / COLS);
       const cells = COLS * rows;
       const e = new Float32Array(cells * 4);
       const s = new Float32Array(cells * 4);
       const dashData = new Float32Array(cells * 4);
-      animated = false;
       const c = new Uint8Array(cells * 4);
       for (let i = 0; i < count; i++) {
         const arc = arcs[i];
@@ -263,6 +266,7 @@ export function createArcPass(gl: WebGL2RenderingContext, options: ArcPassOption
         ));
         s[i * 4 + 1] = arc.stroke ?? 2;
         s[i * 4 + 2] = arc.altitude ?? 0.002;
+        s[i * 4 + 3] = arc.endAltitude ?? arc.altitude ?? 0.002;
         dashData[i * 4] = arc.dashLength ?? 1;
         dashData[i * 4 + 1] = arc.dashGap ?? 0;
         dashData[i * 4 + 2] = arc.dashSpeed ?? 0;
@@ -323,6 +327,41 @@ export function pathSegments(paths: readonly Path[]): Arc[] {
         color: path.color,
         opacity: path.opacity,
       });
+    }
+  }
+  return out;
+}
+
+export interface Bar {
+  lat: number;
+  lng: number;
+  /** Height above the surface, in globe radii. */
+  height: number;
+  /** Width in pixels. The default is 4. */
+  stroke?: number;
+  color?: string;
+  opacity?: number;
+}
+
+/** A bar is an arc from a place at the surface to the same place at its height. */
+export function barArcs(bars: readonly Bar[]): Arc[] {
+  return bars.map((b) => ({
+    startLat: b.lat, startLng: b.lng, endLat: b.lat, endLng: b.lng,
+    clearance: 0, altitude: 0.002, endAltitude: b.height,
+    stroke: b.stroke ?? 4, color: b.color, opacity: b.opacity,
+  }));
+}
+
+/**
+ * The outline of a country or any area, as paths. One path for each ring. A ring is unwrapped
+ * first, so a border that crosses the antimeridian stays one line.
+ */
+export function geometryPaths(geometry: AreaGeometry, style: Omit<Path, 'points'> = {}): Path[] {
+  const polys = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  const out: Path[] = [];
+  for (const poly of polys) {
+    for (const ring of poly) {
+      out.push({ ...style, points: unwrapRing(ring).pts.map(([lng, lat]) => [lat, lng] as const) });
     }
   }
   return out;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latLng, latticePoint, latticeSpacing, nearestBruteForce, nearestLattice, unitVector, type Vec3 } from '../src/fibonacci';
+import { binPoints, latLng, latticePoint, latticeSpacing, nearestBruteForce, nearestLattice, unitVector, type Vec3 } from '../src/fibonacci';
 
 function seeded(seed: number) {
   let s = seed;
@@ -51,5 +51,20 @@ describe('spherical Fibonacci lattice', () => {
     }
     expect(unitVector(0, 0)[2]).toBeCloseTo(1, 9); // the prime meridian faces +z
     expect(unitVector(90, 0)[1]).toBeCloseTo(1, 9); // y is up
+  });
+});
+
+describe('binPoints', () => {
+  it('puts each place in the bin of its nearest dot, and scales the largest bin to 1', () => {
+    const n = 5000;
+    const bins = binPoints([
+      { lat: 51.5, lng: -0.13 }, { lat: 51.5, lng: -0.13 }, { lat: 51.5, lng: -0.13 }, // three in London
+      { lat: -33.9, lng: 151.2, weight: 1.5 },                                          // one in Sydney
+    ], n);
+    const london = nearestLattice(unitVector(51.5, -0.13), n).index;
+    const sydney = nearestLattice(unitVector(-33.9, 151.2), n).index;
+    expect(bins[london]).toBe(1);
+    expect(bins[sydney]).toBeCloseTo(0.5, 9);
+    expect(bins.reduce((a, v) => a + (v > 0 ? 1 : 0), 0)).toBe(2);
   });
 });

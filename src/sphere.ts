@@ -41,6 +41,13 @@ export interface SphereStyle {
   glowWidth: number;
   /** How dark the night side is, 0 to 1. 0 turns the terminator off. */
   night: number;
+  /** Degrees between graticule lines. 0 draws none. */
+  graticule: number;
+  graticuleColor: string;
+  /** Opacity of a graticule line, 0 to 1. */
+  graticuleOpacity: number;
+  /** Color a dot takes at data value 1, when per-dot data is set. */
+  dataColor: string;
   base: string;
   dot: string;
   glow: string;
@@ -56,6 +63,10 @@ export const DEFAULT_STYLE: SphereStyle = {
   rim: 0.3,
   glowWidth: 0.18,
   night: 0,
+  graticule: 0,
+  graticuleColor: '#9aa3b0',
+  graticuleOpacity: 0.25,
+  dataColor: '#ff7a45',
   base: '#121316',
   dot: '#e6e6e6',
   glow: '#c9cfd8',
@@ -82,6 +93,10 @@ out vec4 fragColor;
 uniform vec3 uCamPos;
 uniform float uDots, uDotRadius, uDiffuse, uOceanDots, uRim, uGlowWidth, uNight;
 uniform vec3 uSun;
+uniform float uGraticule, uGraticuleOpacity;
+uniform vec3 uGraticuleColor, uDataColor;
+uniform sampler2D uData;
+uniform int uDataCols; // 0 when no per-dot data is set
 uniform vec3 uBase, uDot, uGlow;
 uniform sampler2D uLand, uTint;
 
@@ -94,7 +109,7 @@ const float PHI = 1.618034;
  * Nearest point of an n-point spherical Fibonacci lattice, in constant time.
  * The polar axis is z here, so the caller swizzles y and z. The seam then sits at the poles.
  */
-vec3 nearestLattice(vec3 p, out float dist) {
+vec3 nearestLattice(vec3 p, out float dist, out float index) {
   float byDots = 1.0 / uDots;
   float k = max(2.0, floor(log2(SQRT5 * uDots * PI * (1.0 - p.z * p.z)) * 0.72021));
   vec2 f = floor(pow(PHI, k) / SQRT5 * vec2(1.0, PHI) + 0.5);
@@ -112,6 +127,7 @@ vec3 nearestLattice(vec3 p, out float dist) {
 
   float best = PI;
   vec3 hit = vec3(0.0, 0.0, 1.0);
+  index = 0.0;
   // An integer loop with a fixed count unrolls cleanly. A float loop that skips an iteration
   // makes the platform compiler emit dynamic flow control, which costs compile time.
   // clamp keeps an out-of-range candidate inside the lattice. Index 0 and index n are both real
@@ -142,7 +158,7 @@ vec3 nearestLattice(vec3 p, out float dist) {
     float sinphi = sqrt(max(0.0, 1.0 - cosphi * cosphi));
     vec3 q = vec3(cos(theta) * sinphi, sin(theta) * sinphi, cosphi);
     float d = length(p - q);
-    if (d < best) { best = d; hit = q; }
+    if (d < best) { best = d; hit = q; index = idx; }
   }
   dist = best;
   return hit;
@@ -163,8 +179,8 @@ void main() {
   }
 
   vec3 p = uCamPos + rd * (-b - sqrt(disc));
-  float dist;
-  vec3 q = nearestLattice(p.xzy, dist).xzy;
+  float dist, index;
+  vec3 q = nearestLattice(p.xzy, dist, index).xzy;
 
   float lat = asin(clamp(q.y, -1.0, 1.0));
   float lng = PI * 0.5 - atan(q.z, q.x);
@@ -173,9 +189,20 @@ void main() {
   float isLand = max(texture(uLand, uv).r, uOceanDots);
   vec4 tint = texture(uTint, uv);
 
+  // Per-dot data. A value in 0..1 for this lattice index scales the dot from 0.4 to 1.4 times
+  // its radius and mixes its color toward uDataColor. A dot with data shows over the ocean too.
+  float value = 0.0;
+  float radius = uDotRadius;
+  if (uDataCols > 0) {
+    int i = int(index);
+    value = texelFetch(uData, ivec2(i % uDataCols, i / uDataCols), 0).r;
+    radius *= 0.4 + value;
+    isLand = max(isLand, step(0.001, value));
+  }
+
   float nl = max(dot(p, normalize(uCamPos)), 0.0); // headlight, dim toward the limb
   float aa = fwidth(dist);
-  float coverage = 1.0 - smoothstep(uDotRadius - aa, uDotRadius + aa, dist);
+  float coverage = 1.0 - smoothstep(radius - aa, radius + aa, dist);
   float k = coverage * isLand * pow(nl, uDiffuse);
 
   /*
@@ -184,9 +211,19 @@ void main() {
    * the edge. Linear limb darkening runs across the whole disc, so the sphere reads as round.
    */
   vec3 color = uBase * (0.25 + 0.75 * nl)
-             + mix(uDot, tint.rgb, tint.a) * k
+             + mix(mix(uDot, uDataColor, value), tint.rgb, tint.a) * k
              // A thin edge highlight. A wide one reads as a ring sitting inside the silhouette.
              + pow(1.0 - nl, 10.0) * uGlow * uRim;
+  if (uGraticule > 0.0) {
+    // Distance in degrees to the nearest line of latitude and of longitude, antialiased with
+    // the screen-space derivative so a line stays about one pixel wide at any zoom.
+    vec2 deg = vec2(degrees(asin(clamp(p.y, -1.0, 1.0))), degrees(PI * 0.5 - atan(p.z, p.x)));
+    vec2 toLine = abs(fract(deg / uGraticule + 0.5) - 0.5) * uGraticule;
+    vec2 w = fwidth(deg) * 0.75;
+    float line = max(1.0 - smoothstep(0.0, w.x, toLine.x), 1.0 - smoothstep(0.0, w.y, toLine.y));
+    color = mix(color, uGraticuleColor, line * uGraticuleOpacity * nl);
+  }
+
   // Night. The terminator is a soft band, the width of twilight, around the plane at right
   // angles to the sun. The glow outside the disc is left alone.
   float day = smoothstep(-0.12, 0.12, dot(p, uSun));
@@ -196,7 +233,9 @@ void main() {
 
 /** A hex color as three values in 0..1. Display values, with no color conversion. */
 export function rgb(hex: string): [number, number, number] {
-  const n = parseInt(hex.replace('#', ''), 16);
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]; // #fff is #ffffff
+  const n = parseInt(h, 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
@@ -227,19 +266,28 @@ export interface SpherePass {
   setTint(data: Uint8Array | null, width: number, height: number): void;
   /** Where the sun is overhead. */
   setSun(lat: number, lng: number): void;
+  /**
+   * One value in 0..1 for each lattice dot, for `dots` dots. While set, the lattice holds that
+   * count and ignores `dotPitch`, because the values are indexed by dot. Null clears it.
+   */
+  setDotData(values: Float32Array | null, dots: number): void;
   destroy(): void;
 }
 
 export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<SphereStyle> = {}): SpherePass {
   const style: SphereStyle = { ...DEFAULT_STYLE, ...initial };
   let sun: [number, number, number] = [0, 0, 1];
+  let dataDots = 0; // the lattice count the per-dot data was built for, 0 for none
+  let dataCols = 0;
   const prog = program(gl, VERT, FRAG);
   const vao = gl.createVertexArray()!; // WebGL2 needs a bound array object, even with no attribute
 
   const landFormat: TextureOptions = { internal: gl.R8, format: gl.RED, type: gl.UNSIGNED_BYTE };
   const tintFormat: TextureOptions = { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE };
+  const dataFormat: TextureOptions = { internal: gl.R32F, format: gl.RED, type: gl.FLOAT };
   const land = texture(gl, landFormat);
   const tint = texture(gl, tintFormat);
+  const data = texture(gl, dataFormat);
   upload(gl, land, landFormat, new Uint8Array([0]), 1, 1);
   upload(gl, tint, tintFormat, new Uint8Array([0, 0, 0, 0]), 1, 1);
 
@@ -263,7 +311,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
        * the globe reads as a field of blobs. The count is quadratic in the zoom, which is why the
        * shader needed 32-bit index math: the old ceiling of 32768 dots is passed at a mild zoom.
        */
-      const wanted = style.dotPitch > 0 ? dotsForPitch(v, heightPx, style.dotPitch) : style.dots;
+      const wanted = dataDots > 0 ? dataDots : style.dotPitch > 0 ? dotsForPitch(v, heightPx, style.dotPitch) : style.dots;
       const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
       gl.uniform1f(u.uDots, dots);
       gl.uniform1f(u.uDotRadius, style.dotRatio * latticeSpacing(dots));
@@ -276,6 +324,14 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.uniform3fv(u.uGlow, rgb(style.glow));
       gl.uniform1f(u.uNight, style.night);
       gl.uniform3fv(u.uSun, sun);
+      gl.uniform1f(u.uGraticule, style.graticule);
+      gl.uniform1f(u.uGraticuleOpacity, style.graticuleOpacity);
+      gl.uniform3fv(u.uGraticuleColor, rgb(style.graticuleColor));
+      gl.uniform3fv(u.uDataColor, rgb(style.dataColor));
+      gl.uniform1i(u.uDataCols, dataDots > 0 ? dataCols : 0);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, data);
+      gl.uniform1i(u.uData, 2);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, land);
@@ -290,6 +346,16 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
     },
     setStyle(next) { Object.assign(style, next); },
     setSun(lat, lng) { sun = unitVector(lat, lng); },
+    setDotData(values, dots) {
+      if (!values) { dataDots = 0; return; }
+      // A texture wide enough that the tallest lattice still fits in the row limit.
+      dataCols = 4096;
+      const rows = Math.ceil((dots + 1) / dataCols);
+      const padded = new Float32Array(dataCols * rows);
+      padded.set(values.subarray(0, Math.min(values.length, padded.length)));
+      upload(gl, data, dataFormat, padded, dataCols, rows);
+      dataDots = dots;
+    },
     setLand(data, width, height) {
       upload(gl, land, landFormat, data ?? new Uint8Array([0]), data ? width : 1, data ? height : 1);
     },
@@ -301,6 +367,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.deleteVertexArray(vao);
       gl.deleteTexture(land);
       gl.deleteTexture(tint);
+      gl.deleteTexture(data);
     },
   };
 }

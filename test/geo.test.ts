@@ -4,6 +4,7 @@ import {
   haversineKm, interpolate, slerp, subsolarPoint, toRad, unitVector, wrapLng, type LatLng,
 } from '../src/geo';
 import { pathSegments } from '../src/arcs';
+import { rgb } from '../src/sphere';
 
 const NYC = { lat: 40.7128, lng: -74.006 };
 const LONDON = { lat: 51.5074, lng: -0.1278 };
@@ -142,5 +143,13 @@ describe('subsolar point', () => {
     const midnight = subsolarPoint(new Date(Date.UTC(2026, 10, 3, 0, 0)));
     expect(Math.abs(noon.lng)).toBeLessThan(5);
     expect(Math.abs(midnight.lng)).toBeGreaterThan(175);
+  });
+});
+
+describe('rgb', () => {
+  it('reads a 6 digit and a 3 digit hex color', () => {
+    expect(rgb('#ff8000')).toEqual([1, 128 / 255, 0]);
+    expect(rgb('#fff')).toEqual([1, 1, 1]);
+    expect(rgb('#f00')).toEqual([1, 0, 0]);
   });
 });

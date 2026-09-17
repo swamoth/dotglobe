@@ -88,3 +88,22 @@ export function latLng(v: Vec3): { lat: number; lng: number } {
   lng = ((((lng + 180) % 360) + 360) % 360) - 180;
   return { lat, lng };
 }
+
+/**
+ * Bin weighted places onto the lattice: one value for each of `n` dots, scaled so the largest
+ * bin is 1. Feed the result to `setDotData` with the same `n`. The lattice is a near-uniform
+ * grid on the sphere, so this is the hex-bin of a dot globe, with no second grid to learn.
+ */
+export function binPoints(
+  points: readonly { lat: number; lng: number; weight?: number }[], n: number,
+): Float32Array {
+  const bins = new Float32Array(n + 1);
+  let max = 0;
+  for (const p of points) {
+    const i = nearestLattice(unitVector(p.lat, p.lng), n).index;
+    bins[i] += p.weight ?? 1;
+    if (bins[i] > max) max = bins[i];
+  }
+  if (max > 0) for (let i = 0; i < bins.length; i++) bins[i] /= max;
+  return bins;
+}

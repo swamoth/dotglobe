@@ -9,7 +9,7 @@
 import { view, project as projectPoint, unproject, MAX_LAT, type Camera, type View } from './camera';
 import { createSpherePass, type SphereStyle } from './sphere';
 import { createMarkerPass, type Marker, type MarkerPass } from './markers';
-import { createArcPass, pathSegments, type Arc, type ArcPass, type Path } from './arcs';
+import { createArcPass, pathSegments, barArcs, type Arc, type ArcPass, type Path, type Bar } from './arcs';
 import { createRingPass, type Ring, type RingPass } from './rings';
 import { unitVector } from './fibonacci';
 import { subsolarPoint, wrapLng } from './geo';
@@ -50,10 +50,17 @@ export interface Globe {
   setAutoRotate(degreesPerSecond: number): void;
   /** Put the sun over a place, or over where it is at a moment in time. Set `style.night` to see it. */
   setSun(at: Date | { lat: number; lng: number }): void;
+  /**
+   * One value in 0..1 for each lattice dot, for `dots` dots. A dot grows and takes
+   * `style.dataColor` with its value. Build the values with `binPoints`. Null clears it.
+   */
+  setDotData(values: Float32Array | null, dots: number): void;
   setMarkers(markers: readonly Marker[]): void;
   setArcs(arcs: readonly Arc[]): void;
   /** Lines that follow the surface, for a cable or a route. */
   setPaths(paths: readonly Path[]): void;
+  /** Bars that rise from a place, sized by a value. */
+  setBars(bars: readonly Bar[]): void;
   /** Pulsing rings. While any ring exists the globe keeps drawing, because they animate. */
   setRings(rings: readonly Ring[]): void;
   /** Country shapes that `pick` tests. Pass the GeoJSON geometry of each country, in order. */
@@ -106,6 +113,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let arcPass: ArcPass | null = null;
   let ringPass: RingPass | null = null;
   let pathPass: ArcPass | null = null;
+  let barPass: ArcPass | null = null;
   let markerList: readonly Marker[] = [];
   let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
   let countries: CountryIndex | null = null;
@@ -163,7 +171,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
        * visitor waits for. A marker or an arc appears one frame after its shader is ready.
        */
       sphereDrew = sphere.draw(v, canvas.height);
-      layersDrew = (!pathPass || pathPass.draw(v, [canvas.width, canvas.height], clock))
+      layersDrew = (!barPass || barPass.draw(v, [canvas.width, canvas.height], clock))
+        && (!pathPass || pathPass.draw(v, [canvas.width, canvas.height], clock))
         && (!arcPass || arcPass.draw(v, [canvas.width, canvas.height], clock))
         && (!ringPass || ringPass.draw(v, clock))
         && (!markerPass || markerPass.draw(v));
@@ -351,6 +360,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     setLand(data, w, h) { sphere.setLand(data, w, h); invalidate(); },
     setTint(data, w, h) { sphere.setTint(data, w, h); invalidate(); },
     setAutoRotate(speed) { autoRotate = speed; invalidate(); },
+    setDotData(values, dots) { sphere.setDotData(values, dots); invalidate(); },
     setSun(at) {
       const p = at instanceof Date ? subsolarPoint(at) : at;
       sphere.setSun(p.lat, p.lng);
@@ -379,6 +389,11 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       // A path segment is short and nearly straight, so it needs far fewer steps than an arc.
       pathPass ??= createArcPass(gl, { segments: 6 });
       pathPass.set(pathSegments(paths));
+      invalidate();
+    },
+    setBars(bars) {
+      barPass ??= createArcPass(gl, { segments: 1 }); // a bar is straight
+      barPass.set(barArcs(bars));
       invalidate();
     },
     setRings(rings) {
@@ -430,6 +445,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       arcPass?.destroy();
       ringPass?.destroy();
       pathPass?.destroy();
+      barPass?.destroy();
       listeners.clear();
     },
   };

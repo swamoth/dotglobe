@@ -33,7 +33,7 @@
   <details id="debug" open><summary>debug</summary><div id="controls"></div><div id="stats"></div></details>
 </div>
 <script type="module">
-import { createGlobe, landMask, countryTint, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
+import { createGlobe, landMask, countryTint, binPoints, heatmap, geometryPaths, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
 import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 
 const COLS = 2048, ROWS = 1024;
@@ -68,7 +68,7 @@ const route = (a, b, n = 24) => {
 
 // Layer data, kept so the debug toggles can put a layer back after removing it.
 const LAYERS = {
-  markers: CITIES.map((c) => ({ ...c, size: 0.014, color: '#ff5533' })),
+  markers: CITIES.map((c, i) => ({ ...c, size: 0.014, color: '#ff5533', shape: ['dot', 'ring', 'square', 'diamond'][i % 4] })),
   rings: CITIES.slice(0, 3).map((c) => ({ lat: c.lat, lng: c.lng, maxRadius: 9, width: 1.2, period: 3, color: '#ff5533', opacity: 0.9 })),
   arcs: [
     { startLat: 51.5074, startLng: -0.1278, endLat: 35.6762, endLng: 139.6503, color: '#7aa2f7' },
@@ -76,18 +76,24 @@ const LAYERS = {
     { startLat: 12.9716, startLng: 77.5946, endLat: -33.8688, endLng: 151.2093, color: '#7aa2f7' },
     { startLat: 51.5074, startLng: -0.1278, endLat: -23.5505, endLng: -46.6333, color: '#9ece6a', dashLength: 0.04, dashGap: 0.03, dashSpeed: 0.35 },
   ],
+  bars: CITIES.map((c, i) => ({ lat: c.lat, lng: c.lng, height: 0.08 + 0.05 * (i % 3), stroke: 5, color: '#9ece6a', opacity: 0.9 })),
+  borders: [],
   paths: [
     { points: route([51.5074, -0.1278], [40.71, -74.01]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
     { points: route([-33.87, 151.21], [1.29, 103.85]), stroke: 1.5, color: '#e0af68', opacity: 0.85 },
   ],
 };
-const SETTER = { markers: 'setMarkers', rings: 'setRings', arcs: 'setArcs', paths: 'setPaths' };
+const SETTER = { markers: 'setMarkers', rings: 'setRings', arcs: 'setArcs', paths: 'setPaths', bars: 'setBars', borders: 'setPaths', heat: 'setTint' };
+// Cable paths and borders share one pass, so one call composes both from what is switched on.
+const shown = { paths: true, borders: false };
+const syncPaths = () => globe.setPaths([...(shown.paths ? LAYERS.paths : []), ...(shown.borders ? LAYERS.borders : [])]);
 
 const globe = createGlobe(canvas, {
   camera: { lat: 20, lng: 12, altitude: 1.7 },
   autoRotate: 4,
 });
-for (const name in LAYERS) globe[SETTER[name]](LAYERS[name]);
+const OFF_AT_START = new Set(['data', 'bars', 'borders', 'heat']);
+for (const name in LAYERS) if (!OFF_AT_START.has(name)) globe[SETTER[name]](LAYERS[name]);
 
 // One HTML element for each city, moved by project() on every frame.
 const pins = CITIES.map((c) => {
@@ -163,6 +169,8 @@ section('light');
 styleRange('rim', 0, 1, 0.05);
 styleRange('glowWidth', 0, 0.6, 0.01);
 styleRange('night', 0, 1, 0.05);
+styleRange('graticule', 0, 30, 5);
+styleRange('graticuleOpacity', 0, 1, 0.05);
 color('base'); color('dot'); color('glow');
 globe.setSun(new Date()); // where the sun is right now, shown once night is above 0
 
@@ -182,7 +190,26 @@ for (const c of CITIES) {
 }
 
 section('layers');
-for (const name in LAYERS) check(name, true, (on) => globe[SETTER[name]](on ? LAYERS[name] : []));
+const DATA_DOTS = 20000;
+let seed = 7;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 2;
+const samples = [];
+for (let i = 0; i < 3000; i++) {
+  const c = CITIES[i % CITIES.length];
+  samples.push({ lat: c.lat + gauss() * 6, lng: c.lng + gauss() * 8, weight: 0.5 + rnd() });
+}
+LAYERS.data = binPoints(samples, DATA_DOTS);
+LAYERS.heat = heatmap(samples, 1024, 512, { radius: 5, color: '#ff7a45' });
+const realSetTint = globe.setTint.bind(globe);
+globe.setTint = (v) => realSetTint(v, 1024, 512);
+SETTER.data = 'setDotData';
+const realSetDotData = globe.setDotData.bind(globe);
+globe.setDotData = (v) => realSetDotData(v && v.length ? v : null, DATA_DOTS);
+for (const name in LAYERS) check(name, !OFF_AT_START.has(name), (on) => {
+  if (name === 'paths' || name === 'borders') { shown[name] = on; syncPaths(); return; }
+  globe[SETTER[name]](on ? LAYERS[name] : (name === 'heat' ? null : []));
+});
 
 // Stats: frames in the last second, the lattice in use, and the camera. Refreshed once a second,
 // so the panel itself never becomes the thing that costs frames.
@@ -191,7 +218,8 @@ globe.onRender(() => { frames++; });
 setInterval(() => {
   const v = view(globe.camera, canvas.clientWidth / canvas.clientHeight);
   const wanted = style.dotPitch > 0 ? dotsForPitch(v, canvas.height, style.dotPitch) : style.dots;
-  const dots = Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
+  const dataOn = [...document.querySelectorAll('#debug label.check')].some((l) => l.textContent.trim() === 'data' && l.querySelector('input').checked);
+  const dots = dataOn ? DATA_DOTS : Math.min(MAX_DOTS, Math.max(100, Math.round(wanted)));
   const { lat, lng, altitude: alt } = globe.camera;
   stats.textContent = [
     `fps       ${String(frames).padStart(4)}   (0 when idle)`,
@@ -213,6 +241,7 @@ const names = countries.map((f) => f.properties?.name ?? String(f.id));
 const started = performance.now();
 globe.setLand(landMask(countries.map((f) => f.geometry), COLS, ROWS), COLS, ROWS);
 globe.setCountries(countries.map((f) => f.geometry));
+LAYERS.borders = countries.flatMap((f) => geometryPaths(f.geometry, { stroke: 1, color: '#7aa2f7', opacity: 0.6 }));
 const maskMs = performance.now() - started;
 
 await globe.ready;
@@ -222,6 +251,8 @@ readout.textContent = `${countries.length} countries, mask built in ${maskMs.toF
 let hovered = -1;
 const highlight = (i) => {
   if (i === hovered) return;
+  // The heat map and the hover highlight share the tint texture. Heat wins while it is on.
+  if (document.querySelector('#debug label.check input:checked') && [...document.querySelectorAll('#debug label.check')].some((l) => l.textContent.trim() === 'heat' && l.querySelector('input').checked)) return;
   hovered = i;
   const entries = i >= 0 ? [{ geometry: countries[i].geometry, color: 'rgba(122, 162, 247, 0.55)' }] : [];
   globe.setTint(entries.length ? countryTint(entries, 1024, 512) : null, 1024, 512);
