@@ -427,20 +427,28 @@ export function geometryPaths(geometry: AreaGeometry, style: Omit<Path, 'points'
 }
 
 /**
- * The arc under a pixel, or -1. Each arc is sampled along its length with the same curve the
- * shader draws, projected, and tested against the pixel as a chain of segments. An arc counts
- * as hit within half its stroke plus a 4 pixel margin, and the nearest one wins.
- *
- * ponytail: every arc is sampled on every call, which is about 3 ms for 1000 arcs. A screen
- * space index if a page picks that many on every pointer move.
+ * Arcs prepared for `pickArc`: the world position of each sample along each arc, from the same
+ * curve the shader draws, plus a bounding sphere for each arc. Build it once when the arcs are
+ * set, so a pick on every pointer move does no trigonometry.
  */
-export function pickArc(arcs: readonly Arc[], v: View, x: number, y: number, width: number, height: number): number {
-  const STEPS = 24;
-  const [cx, cy, cz] = v.position;
-  const cc = cx * cx + cy * cy + cz * cz - 1;
-  let best = -1, bestDist = Infinity;
-  let px = 0, py = 0, pv = false;
-  for (let i = 0; i < arcs.length; i++) {
+export interface ArcPickData {
+  /** Samples along one arc. A path segment is short and straight, so 2 is enough for it. */
+  steps: number;
+  count: number;
+  /** x, y, z of each sample, arc by arc. */
+  positions: Float32Array;
+  /** Center and radius of the sphere around each arc, as x, y, z, r. */
+  bounds: Float32Array;
+  /** Half the stroke plus a margin, in pixels, for each arc. */
+  reach: Float32Array;
+}
+
+export function prepareArcs(arcs: readonly Arc[], steps = 24): ArcPickData {
+  const n = arcs.length;
+  const positions = new Float32Array(n * (steps + 1) * 3);
+  const bounds = new Float32Array(n * 4);
+  const reach = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
     const arc = arcs[i];
     const a = unitVector(arc.startLat, arc.startLng);
     const b = unitVector(arc.endLat, arc.endLng);
@@ -448,29 +456,81 @@ export function pickArc(arcs: readonly Arc[], v: View, x: number, y: number, wid
     const sinOmega = Math.sin(omega);
     const clearance = arc.clearance ?? arcClearanceFor(omega);
     const alt = arc.altitude ?? 0.002, endAlt = arc.endAltitude ?? alt;
-    const reach = (arc.stroke ?? 2) / 2 + 4;
-    for (let s = 0; s <= STEPS; s++) {
-      const t = s / STEPS;
+    reach[i] = (arc.stroke ?? 2) / 2 + 4;
+    let cx = 0, cy = 0, cz = 0;
+    const base = i * (steps + 1) * 3;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
       const wa = sinOmega < 1e-6 ? 1 - t : Math.sin((1 - t) * omega) / sinOmega;
       const wb = sinOmega < 1e-6 ? t : Math.sin(t * omega) / sinOmega;
       const r = 1 + alt + (endAlt - alt) * t + clearance * Math.sin(Math.PI * t);
-      const wx = (wa * a[0] + wb * b[0]) * r, wy = (wa * a[1] + wb * b[1]) * r, wz = (wa * a[2] + wb * b[2]) * r;
-      // Project, with the same occlusion test as the shader.
-      const rx = wx - cx, ry = wy - cy, rz = wz - cz;
+      const k = base + s * 3;
+      positions[k] = (wa * a[0] + wb * b[0]) * r;
+      positions[k + 1] = (wa * a[1] + wb * b[1]) * r;
+      positions[k + 2] = (wa * a[2] + wb * b[2]) * r;
+      cx += positions[k]; cy += positions[k + 1]; cz += positions[k + 2];
+    }
+    cx /= steps + 1; cy /= steps + 1; cz /= steps + 1;
+    let radius = 0;
+    for (let s = 0; s <= steps; s++) {
+      const k = base + s * 3;
+      radius = Math.max(radius, Math.hypot(positions[k] - cx, positions[k + 1] - cy, positions[k + 2] - cz));
+    }
+    // The true curve bulges a little past the chord between two samples. Allow for it.
+    bounds[i * 4] = cx; bounds[i * 4 + 1] = cy; bounds[i * 4 + 2] = cz;
+    bounds[i * 4 + 3] = radius + 0.02 + (omega / steps) * 0.5;
+  }
+  return { steps, count: n, positions, bounds, reach };
+}
+
+/**
+ * The arc under a pixel, or -1. The ray through the pixel is tested against the bounding sphere
+ * of each arc first, which drops most of them. The samples of the rest are projected, with the
+ * same occlusion test as the shader, and tested against the pixel as a chain of segments. An
+ * arc counts as hit within its reach, and the nearest one wins.
+ */
+export function pickArc(data: ArcPickData, v: View, x: number, y: number, width: number, height: number): number {
+  const { steps, positions, bounds, reach } = data;
+  const [cx, cy, cz] = v.position;
+  const cc = cx * cx + cy * cy + cz * cz - 1;
+  // The ray through the pixel, as in camera.rayThrough.
+  const u = (x / width) * 2 - 1, w = 1 - (y / height) * 2;
+  let dx = v.forward[0] + (v.right[0] * u * v.aspect + v.up[0] * w) / v.focal;
+  let dy = v.forward[1] + (v.right[1] * u * v.aspect + v.up[1] * w) / v.focal;
+  let dz = v.forward[2] + (v.right[2] * u * v.aspect + v.up[2] * w) / v.focal;
+  const dl = Math.hypot(dx, dy, dz);
+  dx /= dl; dy /= dl; dz /= dl;
+  const pxPerUnit = v.focal * height * 0.5; // at depth 1
+
+  let best = -1, bestDist = Infinity;
+  let px = 0, py = 0, pv = false;
+  for (let i = 0; i < data.count; i++) {
+    // Bounding sphere against the ray. The reach grows with depth, because a pixel does.
+    const bx = bounds[i * 4] - cx, by = bounds[i * 4 + 1] - cy, bz = bounds[i * 4 + 2] - cz;
+    const t = bx * dx + by * dy + bz * dz;
+    const miss = bx * bx + by * by + bz * bz - t * t;
+    const allow = bounds[i * 4 + 3] + (reach[i] * Math.max(t, 0.01)) / pxPerUnit;
+    if (miss > allow * allow) continue;
+
+    const base = i * (steps + 1) * 3;
+    for (let s = 0; s <= steps; s++) {
+      const k = base + s * 3;
+      const rx = positions[k] - cx, ry = positions[k + 1] - cy, rz = positions[k + 2] - cz;
       const z = rx * v.forward[0] + ry * v.forward[1] + rz * v.forward[2];
       const len = Math.hypot(rx, ry, rz);
       const bb = (cx * rx + cy * ry + cz * rz) / len;
       const disc = bb * bb - cc;
-      const visible = z > 1e-6 && !(disc > 0 && -bb - Math.sqrt(disc) > 0 && -bb - Math.sqrt(disc) < len - 1e-4);
+      const hit = disc > 0 ? -bb - Math.sqrt(disc) : -1;
+      const visible = z > 1e-6 && !(hit > 0 && hit < len - 1e-4);
       const sx = (((rx * v.right[0] + ry * v.right[1] + rz * v.right[2]) / z) * (v.focal / v.aspect) * 0.5 + 0.5) * width;
       const sy = (1 - (((rx * v.up[0] + ry * v.up[1] + rz * v.up[2]) / z) * v.focal * 0.5 + 0.5)) * height;
       if (s > 0 && visible && pv) {
         // Distance from the pixel to the segment from the last sample to this one.
-        const dx = sx - px, dy = sy - py;
-        const l2 = dx * dx + dy * dy;
-        const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - px) * dx + (y - py) * dy) / l2)) : 0;
-        const d = Math.hypot(x - (px + u * dx), y - (py + u * dy));
-        if (d < reach && d < bestDist) { bestDist = d; best = i; }
+        const ex = sx - px, ey = sy - py;
+        const l2 = ex * ex + ey * ey;
+        const f = l2 > 0 ? Math.max(0, Math.min(1, ((x - px) * ex + (y - py) * ey) / l2)) : 0;
+        const d = Math.hypot(x - (px + f * ex), y - (py + f * ey));
+        if (d < reach[i] && d < bestDist) { bestDist = d; best = i; }
       }
       px = sx; py = sy; pv = visible;
     }

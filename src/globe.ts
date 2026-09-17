@@ -7,9 +7,9 @@
  */
 
 import { view, project as projectPoint, unproject, MAX_LAT, type Camera, type View } from './camera';
-import { createSpherePass, type SphereStyle } from './sphere';
+import { createSpherePass, pixelsPerUnit, type SphereStyle } from './sphere';
 import { createMarkerPass, type Marker, type MarkerPass } from './markers';
-import { createArcPass, pathSegments, barArcs, pickArc, type Arc, type ArcPass, type Path, type Bar } from './arcs';
+import { createArcPass, pathSegments, barArcs, pickArc, prepareArcs, type Arc, type ArcPass, type ArcPickData, type Path, type Bar } from './arcs';
 import { createRingPass, type Ring, type RingPass } from './rings';
 import { createLabelLayer, type Label, type LabelLayer, type LabelOptions } from './labels';
 import { unitVector } from './fibonacci';
@@ -96,6 +96,8 @@ export interface Pick {
   country: number;
   /** Index of the arc under the point, or -1. */
   arc: number;
+  /** Index of the path under the point, or -1. */
+  path: number;
 }
 
 export interface PickEvent extends Pick {
@@ -155,6 +157,9 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let markerList: readonly Marker[] = [];
   let markerPoints: Float32Array = new Float32Array(0); // unit vectors, for pick
   let countries: CountryIndex | null = null;
+  let arcPick: ArcPickData | null = null; // the arcs, prepared for pick
+  let pathPick: ArcPickData | null = null; // the segments of every path, prepared for pick
+  let pathOf: Int32Array = new Int32Array(0); // the path each segment belongs to
 
   /*
    * Everything a setter received, so the globe can build itself again after the browser drops
@@ -351,7 +356,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       // A pick costs one pass over the markers, so it runs only for a listener that wants it.
       if (!listeners.get('hover')?.size && !listeners.get('click')?.size) return;
       const p = pickAt(e);
-      canvas.style.cursor = p && (p.marker >= 0 || p.arc >= 0) && listeners.get('click')?.size ? 'pointer' : '';
+      canvas.style.cursor = p && (p.marker >= 0 || p.arc >= 0 || p.path >= 0) && listeners.get('click')?.size ? 'pointer' : '';
       if (p || hovering) emit('hover', p);
       hovering = p !== null;
       return;
@@ -521,6 +526,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     },
     setArcs(arcs) {
       stash.arcs = arcs;
+      arcPick = arcs.length ? prepareArcs(arcs) : null;
       arcPass ??= createArcPass(gl);
       arcPass.set(arcs, reducedMotion ? null : clock);
       invalidate();
@@ -529,7 +535,11 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       stash.paths = paths;
       // A path segment is short and nearly straight, so it needs far fewer steps than an arc.
       pathPass ??= createArcPass(gl, { segments: 6 });
-      pathPass.set(pathSegments(paths), reducedMotion ? null : clock);
+      const segs = pathSegments(paths);
+      pathPick = segs.length ? prepareArcs(segs, 2) : null;
+      pathOf = new Int32Array(segs.length);
+      for (let i = 0, k = 0; i < paths.length; i++) for (let j = 1; j < paths[i].points.length; j++) pathOf[k++] = i;
+      pathPass.set(segs, reducedMotion ? null : clock);
       invalidate();
     },
     setBars(bars) {
@@ -555,14 +565,19 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     project(lat, lng, altitude = 0) { return projectPoint(currentView(), lat, lng, altitude, width, height); },
     pick(x, y) {
       const v = currentView();
-      const arc = stash.arcs.length ? pickArc(stash.arcs, v, x, y, width, height) : -1;
+      const arc = arcPick ? pickArc(arcPick, v, x, y, width, height) : -1;
+      const seg = pathPick ? pickArc(pathPick, v, x, y, width, height) : -1;
+      const path = seg >= 0 ? pathOf[seg] : -1;
       const place = unproject(v, x, y, width, height);
       // An arc rises above the surface, so a point past the limb can still sit on one.
-      if (!place) return arc >= 0 ? { lat: NaN, lng: NaN, marker: -1, country: -1, arc } : null;
+      if (!place) return arc >= 0 || path >= 0 ? { lat: NaN, lng: NaN, marker: -1, country: -1, arc, path } : null;
+
+      const p = unitVector(place.lat, place.lng);
+      const ppu = pixelsPerUnit(v, height);
 
       // Nearest marker, by straight-line distance on the sphere. A marker counts as hit when the
       // point falls inside its radius. One pass over the list, with no allocation.
-      const p = unitVector(place.lat, place.lng);
+      const minRadius = 6 / ppu; // a small marker still takes a 6 pixel hit
       let marker = -1;
       let best = Infinity;
       for (let i = 0; i < markerList.length; i++) {
@@ -570,12 +585,12 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
         const dy = p[1] - markerPoints[i * 3 + 1];
         const dz = p[2] - markerPoints[i * 3 + 2];
         const d = dx * dx + dy * dy + dz * dz;
-        const r = markerList[i].size ?? 0.01;
+        const r = Math.max(minRadius, markerList[i].size ?? 0.01);
         if (d < r * r && d < best) { best = d; marker = i; }
       }
 
       const country = countries ? countries.locate(place.lat, place.lng) : -1;
-      return { lat: place.lat, lng: place.lng, marker, country, arc };
+      return { lat: place.lat, lng: place.lng, marker, country, arc, path };
     },
     on(type, fn) {
       let set = listeners.get(type);

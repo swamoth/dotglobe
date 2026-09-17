@@ -62,7 +62,7 @@ globe.on('hover', (hit) => tooltip.textContent = hit ? names[hit.country] : '');
 globe.setLabels([{ lat: 51.5, lng: -0.13, text: 'London', priority: 2 }]);
 
 const at = globe.project(51.5, -0.13);   // CSS pixels, plus visible: false behind the globe
-const hit = globe.pick(x, y);            // { lat, lng, marker, country, arc } or null
+const hit = globe.pick(x, y);            // { lat, lng, marker, country, arc, path } or null
 ```
 
 Events: `click`, `rightclick`, `hover`, `camera`, `render`, and `draw`, which hands you
@@ -101,7 +101,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 16.8 kB |
+| Core bundle, gzipped | under 20 kB | 17.5 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -136,7 +136,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **44.5 kB** | **16.8 kB** |
+| **dotglobe** | **46.4 kB** | **17.5 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
@@ -185,7 +185,8 @@ cache that the harness cannot clear.
 - [x] Heat map: `heatmap` builds a tint raster from weighted places
 - [x] Events: click, right click, hover, camera, and a draw hook for a custom WebGL layer
 - [x] Arcs and paths that draw themselves in and erase themselves, for an emit-on-click effect
-- [x] `pick` finds the arc under a point, for a highlight on hover
+- [x] `pick` finds the arc or the path under a point, for a highlight on hover. 1000 arcs: under 1 ms
+- [x] A color ramp for per-dot data: `dataColor: ['#3b4261', '#7aa2f7', '#ff7a45']`
 - [x] `dotglobe/land`: a 7 kB land mask that ships with the package
 - [x] HTML labels with occlusion and declutter
 - [x] `toBlob` screenshot, WebGL context loss recovery, no drawing while out of view
@@ -200,13 +201,15 @@ npm install
 npm run demo      # builds, then serves the demo on http://127.0.0.1:5173
 ```
 
-The demo draws real coastlines from Natural Earth, six city markers, rings, arcs, cable paths,
-and HTML labels pinned by `project()`. Drag to turn, scroll to zoom.
+The demo is a story. The globe stays pinned while the page scrolls, and each chapter sets its
+layers and moves the camera: 10 000 markers, arcs that draw themselves in, data on the dots, a
+heat map with borders, labels, and the day-night line. Real coastlines from Natural Earth. Drag
+to turn, scroll on the globe to zoom, click to send an arc.
 
-The debug panel at the top right binds every style value, the camera, and each layer to a plain
-form control, and shows the frame rate, the lattice in use, and the camera. Turn every layer
-off and stop the rotation, and the frame rate reads 0. `window.globe` is exposed too, so
-`globe.pick` and `globe.project` can be tried from the console.
+The Debug link in the navigation opens a panel that binds every style value, the camera, and
+each layer to a plain form control, and shows the frame rate, the lattice in use, and the
+camera. `window.globe` is exposed too, so `globe.pick` and `globe.project` can be tried
+from the console.
 
 ## Develop
 

@@ -46,8 +46,11 @@ export interface SphereStyle {
   graticuleColor: string;
   /** Opacity of a graticule line, 0 to 1. */
   graticuleOpacity: number;
-  /** Color a dot takes at data value 1, when per-dot data is set. */
-  dataColor: string;
+  /**
+   * Color for per-dot data. One color: a dot mixes from `dot` toward it with its value. A list:
+   * a color ramp from value 0 to 1, for example ['#1a1c2c', '#f4f1de', '#ff7a45'].
+   */
+  dataColor: string | string[];
   base: string;
   dot: string;
   glow: string;
@@ -95,6 +98,8 @@ uniform float uDots, uDotRadius, uDiffuse, uOceanDots, uRim, uGlowWidth, uNight;
 uniform vec3 uSun;
 uniform float uGraticule, uGraticuleOpacity;
 uniform vec3 uGraticuleColor, uDataColor;
+uniform sampler2D uRamp;
+uniform int uUseRamp;
 uniform sampler2D uData;
 uniform int uDataCols; // 0 when no per-dot data is set
 uniform vec3 uBase, uDot, uGlow;
@@ -189,14 +194,14 @@ void main() {
   float isLand = max(texture(uLand, uv).r, uOceanDots);
   vec4 tint = texture(uTint, uv);
 
-  // Per-dot data. A value in 0..1 for this lattice index scales the dot from 0.4 to 1.4 times
-  // its radius and mixes its color toward uDataColor. A dot with data shows over the ocean too.
+  // Per-dot data. A value in 0..1 for this lattice index scales the dot from 0.55 to 1.45 times
+  // its radius and sets its color. A dot with data shows over the ocean too.
   float value = 0.0;
   float radius = uDotRadius;
   if (uDataCols > 0) {
     int i = int(index);
     value = texelFetch(uData, ivec2(i % uDataCols, i / uDataCols), 0).r;
-    radius *= 0.4 + value;
+    radius *= 0.55 + 0.9 * value;
     isLand = max(isLand, step(0.001, value));
   }
 
@@ -211,7 +216,7 @@ void main() {
    * the edge. Linear limb darkening runs across the whole disc, so the sphere reads as round.
    */
   vec3 color = uBase * (0.25 + 0.75 * nl)
-             + mix(mix(uDot, uDataColor, value), tint.rgb, tint.a) * k
+             + mix(uUseRamp > 0 ? texture(uRamp, vec2(value, 0.5)).rgb : mix(uDot, uDataColor, value), tint.rgb, tint.a) * k
              // A thin edge highlight. A wide one reads as a ring sitting inside the silhouette.
              + pow(1.0 - nl, 10.0) * uGlow * uRim;
   if (uGraticule > 0.0) {
@@ -288,8 +293,23 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
   const land = texture(gl, landFormat);
   const tint = texture(gl, tintFormat);
   const data = texture(gl, dataFormat);
+  const ramp = texture(gl, tintFormat);
   upload(gl, land, landFormat, new Uint8Array([0]), 1, 1);
   upload(gl, tint, tintFormat, new Uint8Array([0, 0, 0, 0]), 1, 1);
+
+  // The ramp is a 256 texel row, built again only when dataColor changes.
+  const setRamp = (stops: readonly string[]) => {
+    const px = new Uint8Array(256 * 4);
+    const colors = stops.map(rgb);
+    for (let i = 0; i < 256; i++) {
+      const f = (i / 255) * (colors.length - 1);
+      const a = colors[Math.floor(f)], b = colors[Math.min(colors.length - 1, Math.floor(f) + 1)], t = f - Math.floor(f);
+      for (let c = 0; c < 3; c++) px[i * 4 + c] = (a[c] + (b[c] - a[c]) * t) * 255;
+      px[i * 4 + 3] = 255;
+    }
+    upload(gl, ramp, tintFormat, px, 256, 1);
+  };
+  if (Array.isArray(style.dataColor)) setRamp(style.dataColor);
 
   return {
     draw(v, heightPx) {
@@ -327,11 +347,16 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.uniform1f(u.uGraticule, style.graticule);
       gl.uniform1f(u.uGraticuleOpacity, style.graticuleOpacity);
       gl.uniform3fv(u.uGraticuleColor, rgb(style.graticuleColor));
-      gl.uniform3fv(u.uDataColor, rgb(style.dataColor));
+      const useRamp = Array.isArray(style.dataColor);
+      gl.uniform3fv(u.uDataColor, useRamp ? [0, 0, 0] : rgb(style.dataColor as string));
+      gl.uniform1i(u.uUseRamp, useRamp && dataDots > 0 ? 1 : 0);
       gl.uniform1i(u.uDataCols, dataDots > 0 ? dataCols : 0);
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, data);
       gl.uniform1i(u.uData, 2);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, ramp);
+      gl.uniform1i(u.uRamp, 3);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, land);
@@ -344,7 +369,10 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.bindVertexArray(null);
       return true;
     },
-    setStyle(next) { Object.assign(style, next); },
+    setStyle(next) {
+      Object.assign(style, next);
+      if (Array.isArray(next.dataColor)) setRamp(next.dataColor);
+    },
     setSun(lat, lng) { sun = unitVector(lat, lng); },
     setDotData(values, dots) {
       if (!values) { dataDots = 0; return; }
@@ -368,6 +396,7 @@ export function createSpherePass(gl: WebGL2RenderingContext, initial: Partial<Sp
       gl.deleteTexture(land);
       gl.deleteTexture(tint);
       gl.deleteTexture(data);
+      gl.deleteTexture(ramp);
     },
   };
 }

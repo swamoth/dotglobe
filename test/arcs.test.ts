@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pathSegments, pickArc } from '../src/arcs';
+import { pathSegments, pickArc, prepareArcs } from '../src/arcs';
 import { view, project } from '../src/camera';
 
 describe('pathSegments', () => {
@@ -15,7 +15,7 @@ describe('pathSegments', () => {
 });
 
 describe('pickArc', () => {
-  const arcs = [{ startLat: 0, startLng: 0, endLat: 0, endLng: 90 }];
+  const arcs = prepareArcs([{ startLat: 0, startLng: 0, endLat: 0, endLng: 90 }]);
   const v = view({ lat: 0, lng: 45, altitude: 1.6 }, 1);
 
   it('hits the arc at its projected middle and misses a corner', () => {
