@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>dotglobe benchmark</title>
+<title>globedots benchmark</title>
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style>
 <canvas id="c"></canvas>
 <script type="module">
@@ -17,7 +17,7 @@ const done = (value) => { window.__bench = value; };
 
 let mod;
 try {
-  mod = await import('../dist/dotglobe.js');
+  mod = await import('../dist/globedots.js');
 } catch (e) {
   done({ skipped: 'the bundle failed to load: ' + e.message });
   throw e;
@@ -43,7 +43,7 @@ if (typeof mod.createGlobe !== 'function') {
   /*
    * The first WebGL2 context on a page costs about 80 ms in Chrome. That is the handshake with
    * the GPU process, and no library can avoid it. Pay it here on a throwaway canvas, so the
-   * measurement below reports the work of dotglobe and not the start-up of the browser. The cold
+   * measurement below reports the work of globedots and not the start-up of the browser. The cold
    * cost is reported on its own, because a page still pays it once.
    */
   const coldStart = performance.now();

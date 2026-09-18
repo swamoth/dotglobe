@@ -4,7 +4,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-const entries = [['src/index.ts', 'dist/dotglobe.js'], ['src/react.ts', 'dist/react.js'], ['src/land.ts', 'dist/land.js']];
+const entries = [['src/index.ts', 'dist/globedots.js'], ['src/react.ts', 'dist/react.js'], ['src/land.ts', 'dist/land.js']];
 
 /**
  * Keep the core out of the React bundle. Without this the React entry inlines every core module,
@@ -14,7 +14,7 @@ const useCoreBundle = {
   name: 'use-core-bundle',
   setup(build) {
     build.onResolve({ filter: /^\.\/[a-z]+$/ }, (args) => (
-      args.kind === 'entry-point' ? null : { path: './dotglobe.js', external: true }
+      args.kind === 'entry-point' ? null : { path: './globedots.js', external: true }
     ));
   },
 };

@@ -1,5 +1,5 @@
 /**
- * Bundle size of the globe layer that NetEye ships today, against dotglobe.
+ * Bundle size of the globe layer that NetEye ships today, against globedots.
  *
  * Both sides go through the same esbuild settings and the same gzip, so the numbers compare.
  * React is external on both sides, because the app ships React either way.
@@ -65,13 +65,13 @@ for (const [name, source] of cases) {
 }
 
 await bundle();
-const own = readFileSync('dist/dotglobe.js');
+const own = readFileSync('dist/globedots.js');
 const ownGzip = gzipSync(own, { level: 9 }).length;
-console.log(`\n${'dotglobe'.padEnd(18)} raw ${kb(own.length).padStart(10)}   gzip ${kb(ownGzip).padStart(9)}`);
+console.log(`\n${'globedots'.padEnd(18)} raw ${kb(own.length).padStart(10)}   gzip ${kb(ownGzip).padStart(9)}`);
 
 const top = results.find(([name]) => name === 'react-globe.gl') ?? results[0];
 if (top) {
   const [name, size] = top;
-  console.log(`\n${name} is ${(size.gzip / ownGzip).toFixed(1)}x the gzipped size of dotglobe.`);
+  console.log(`\n${name} is ${(size.gzip / ownGzip).toFixed(1)}x the gzipped size of globedots.`);
   console.log(`Replacing it saves ${kb(size.gzip - ownGzip)} gzipped, before any app code changes.`);
 }

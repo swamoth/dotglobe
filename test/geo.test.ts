@@ -66,7 +66,7 @@ describe('arc height', () => {
     expect(arcClearanceFor(10)).toBe(ARC_CLEARANCE_MAX); // clamped
   });
 
-  it('holds the dotglobe arc above the surface over its whole length', () => {
+  it('holds the globedots arc above the surface over its whole length', () => {
     for (const deg of [0.5, 5, 30, 90, 150, 179.5]) {
       const clearance = arcClearanceFor(toRad(deg));
       for (let i = 0; i <= 100; i++) expect(arcHeight(i / 100, clearance)).toBeGreaterThanOrEqual(0);

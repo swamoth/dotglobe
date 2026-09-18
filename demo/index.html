@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>dotglobe</title>
+<title>globedots</title>
 <meta name="description" content="A dot-matrix globe on WebGL2 in 17 kB. Markers, arcs, labels, heat maps, and a day-night line. No three.js.">
 <style>
   /*
@@ -125,7 +125,7 @@
 </style>
 
 <header class="nav">
-  <a class="mark" href="#top">dotglobe</a>
+  <a class="mark" href="#top">globedots</a>
   <ul>
     <li><a href="#story">Story</a></li>
     <li><a href="#install">Install</a></li>
@@ -202,9 +202,9 @@
     <section class="install" id="install">
       <h2>Install</h2>
       <p>One package, no dependency. A land mask ships with it, so the first globe needs no data.</p>
-      <pre>npm install dotglobe</pre>
-      <pre><span class="k">import</span> { createGlobe } <span class="k">from</span> 'dotglobe';
-<span class="k">import</span> { land } <span class="k">from</span> 'dotglobe/land';
+      <pre>npm install globedots</pre>
+      <pre><span class="k">import</span> { createGlobe } <span class="k">from</span> 'globedots';
+<span class="k">import</span> { land } <span class="k">from</span> 'globedots/land';
 
 <span class="k">const</span> globe = createGlobe(canvas, { autoRotate: 6 });
 globe.setLand(...<span class="k">await</span> land());
@@ -219,7 +219,7 @@ globe.setMarkers([{ lat: 51.5, lng: -0.13, color: '#ff7a45' }]);</pre>
         <li><span>globe.gl</span><i style="transform: scaleX(0.995)"></i><span class="num">542.0 kB</span></li>
         <li><span>three-globe</span><i style="transform: scaleX(0.836)"></i><span class="num">455.5 kB</span></li>
         <li><span>three</span><i style="transform: scaleX(0.341)"></i><span class="num">185.9 kB</span></li>
-        <li class="us"><span>dotglobe</span><i style="transform: scaleX(0.032)"></i><span class="num">17.5 kB</span></li>
+        <li class="us"><span>globedots</span><i style="transform: scaleX(0.032)"></i><span class="num">17.5 kB</span></li>
       </ul>
     </section>
   </div>
@@ -233,7 +233,7 @@ globe.setMarkers([{ lat: 51.5, lng: -0.13, color: '#ff7a45' }]);</pre>
 <details id="debug"><summary>debug</summary><div id="controls"></div><div id="stats"></div></details>
 
 <script type="module">
-import { createGlobe, landMask, countryTint, binPoints, heatmap, geometryPaths, subsolarPoint, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/dotglobe.js';
+import { createGlobe, landMask, countryTint, binPoints, heatmap, geometryPaths, subsolarPoint, DEFAULT_STYLE, MAX_DOTS, dotsForPitch, view } from '../dist/globedots.js';
 import { land } from '../dist/land.js';
 import { feature } from 'https://cdn.jsdelivr.net/npm/topojson-client@3/+esm';
 

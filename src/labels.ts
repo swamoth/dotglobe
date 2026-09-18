@@ -54,7 +54,7 @@ export function createLabelLayer(canvas: HTMLCanvasElement): LabelLayer {
     tip(text, x, y) {
       if (!tooltip) {
         tooltip = document.createElement('div');
-        tooltip.className = 'dotglobe-tooltip';
+        tooltip.className = 'globedots-tooltip';
         tooltip.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;white-space:nowrap';
         root.append(tooltip);
         // A page that styles the class keeps its look. Otherwise a plain default applies.

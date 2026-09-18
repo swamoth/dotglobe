@@ -4,7 +4,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { analyzeMetafile } from 'esbuild';
 import { bundle } from './build.mjs';
 
-const BUDGET_GZIP = { 'dist/dotglobe.js': 20 * 1024 };
+const BUDGET_GZIP = { 'dist/globedots.js': 20 * 1024 };
 const kb = (n) => `${(n / 1024).toFixed(2)} kB`;
 
 const results = await bundle({ metafile: true });

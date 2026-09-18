@@ -1,5 +1,5 @@
 /**
- * Bake the land mask that `dotglobe/land` ships, from Natural Earth 110m countries.
+ * Bake the land mask that `globedots/land` ships, from Natural Earth 110m countries.
  *
  * Each cell of an equirectangular grid is tested against the country polygons. The rows are
  * then XORed with the row above, packed to bits, and gzipped. Coastlines change little from
@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { feature } from 'topojson-client';
-import { countryIndex } from '../dist/dotglobe.js';
+import { countryIndex } from '../dist/globedots.js';
 
 const [cols, rows] = [Number(process.argv[2] ?? 1024), Number(process.argv[3] ?? 512)];
 const topo = JSON.parse(readFileSync('demo/countries-110m.json', 'utf8'));

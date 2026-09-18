@@ -136,7 +136,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     powerPreference: 'high-performance',
     premultipliedAlpha: true,
   });
-  if (!context) throw new Error('dotglobe: this browser has no WebGL2 context.');
+  if (!context) throw new Error('globedots: this browser has no WebGL2 context.');
   const gl = context;
 
   const camera: Camera = { ...DEFAULT_CAMERA, ...options.camera };

@@ -1,4 +1,4 @@
-# dotglobe
+# globedots
 
 A dot-matrix globe on WebGL2. 18.4 kB gzipped, no dependency, no three.js.
 
@@ -8,7 +8,7 @@ click and hover events, and picking. The globe draws only when something changes
 ## Quick start
 
 ```
-npm install dotglobe
+npm install globedots
 ```
 
 ```html
@@ -16,8 +16,8 @@ npm install dotglobe
 ```
 
 ```js
-import { createGlobe } from 'dotglobe';
-import { land } from 'dotglobe/land';
+import { createGlobe } from 'globedots';
+import { land } from 'globedots/land';
 
 const globe = createGlobe(document.getElementById('globe'), {
   camera: { lat: 20, lng: 0, altitude: 1.6 },
@@ -88,7 +88,7 @@ globe.setTint(rgba, width, height);
 
 globe.setLand(bytes, width, height);
 // An equirectangular mask, 1 byte per cell, 255 for land. Build it with landMask, imageLand,
-// or use land() from 'dotglobe/land'.
+// or use land() from 'globedots/land'.
 
 globe.setCountries(geometries);
 // GeoJSON Polygon or MultiPolygon geometries, in order. pick() then names the country.
@@ -122,7 +122,7 @@ The same object comes from `globe.pick(x, y)` for a point in CSS pixels. `globe.
 lng, altitude)` gives `{ x, y, visible }` for a place. `globe.toBlob()` gives the frame as an
 image.
 
-A `title` on a marker, an arc, or a path shows as a tooltip on hover. Style `.dotglobe-tooltip`
+A `title` on a marker, an arc, or a path shows as a tooltip on hover. Style `.globedots-tooltip`
 to change its look.
 
 ## Style
@@ -166,7 +166,7 @@ haversineKm(a, b)                           // distance between two { lat, lng }
 React:
 
 ```jsx
-import { useGlobe } from 'dotglobe/react';
+import { useGlobe } from 'globedots/react';
 
 function Globe({ markers }) {
   const { ref, globe } = useGlobe({ markers, autoRotate: 6, onClick: (hit) => console.log(hit) });
@@ -188,7 +188,7 @@ leaves.
 | | Raw | Gzipped |
 |---|---|---|
 | `react-globe.gl` with `three` | 1936 kB | 544.8 kB |
-| `dotglobe` | 48.4 kB | 18.4 kB |
+| `globedots` | 48.4 kB | 18.4 kB |
 
 0.2 ms of CPU for a frame with 10 000 markers and 1000 arcs, 0 frames while idle. Measured
 with `npm run bench`.
@@ -206,9 +206,9 @@ npm run bench       # bundle size, then frame time in Chrome
 ## Acknowledgment
 
 The rendering idea comes from [COBE](https://github.com/shuding/cobe) by Shu Ding: a full-screen
-quad, a ray-cast sphere, and a Fibonacci lattice resolved in the fragment shader. dotglobe is a
+quad, a ray-cast sphere, and a Fibonacci lattice resolved in the fragment shader. globedots is a
 rewrite, not a fork. The lattice inverse mapping is from Keinert et al., "Spherical Fibonacci
-Mapping" (2015). Coastlines in the demo and in `dotglobe/land` are from Natural Earth.
+Mapping" (2015). Coastlines in the demo and in `globedots/land` are from Natural Earth.
 
 ## License
 

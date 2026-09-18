@@ -51,5 +51,5 @@ export async function serve(root = process.cwd(), port = 0) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { base } = await serve(process.cwd(), Number(process.argv[2] ?? 5173));
-  console.log(`dotglobe demo on ${base}`);
+  console.log(`globedots demo on ${base}`);
 }

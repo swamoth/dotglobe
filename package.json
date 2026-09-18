@@ -1,5 +1,5 @@
 {
-  "name": "dotglobe",
+  "name": "globedots",
   "version": "0.1.0",
   "description": "Dot-matrix globe in WebGL2. One quad, one ray-cast sphere, no three.js.",
   "keywords": [
@@ -18,12 +18,12 @@
   "files": [
     "dist"
   ],
-  "main": "./dist/dotglobe.js",
+  "main": "./dist/globedots.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./dist/dotglobe.js"
+      "default": "./dist/globedots.js"
     },
     "./react": {
       "types": "./dist/react.d.ts",

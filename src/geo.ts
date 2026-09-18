@@ -69,7 +69,7 @@ export function arcClearanceFor(angle: number): number {
 /**
  * Height above the surface at fraction `t` of an arc, in globe radii.
  *
- * dotglobe builds an arc as a great circle that is lifted by this profile, so the arc is at
+ * globedots builds an arc as a great circle that is lifted by this profile, so the arc is at
  * `clearance` at its middle and at 0 at both ends. A half sine never goes below 0, thus an arc
  * never cuts through the sphere. Compare `arcAltitudeFor`, which corrects a curve that can.
  */
@@ -84,7 +84,7 @@ export const arcHeight = (t: number, clearance: number) => clearance * Math.sin(
  * The library's auto-scale throws a medium arc far out. This function solves the Bezier midpoint
  * for the clearance that `arcClearanceFor` asks for.
  *
- * dotglobe does not need this for its own arcs. It is here for a caller that still draws with
+ * globedots does not need this for its own arcs. It is here for a caller that still draws with
  * globe.gl or three-globe, and for the NetEye migration.
  */
 export function arcAltitudeFor(a: LatLng, b: LatLng): number {

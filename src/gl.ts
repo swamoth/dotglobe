@@ -1,5 +1,5 @@
 /**
- * The small part of WebGL2 that dotglobe uses. No abstraction beyond what three passes share.
+ * The small part of WebGL2 that globedots uses. No abstraction beyond what three passes share.
  */
 
 /**
@@ -64,7 +64,7 @@ export function program(gl: WebGL2RenderingContext, vert: string, frag: string):
         // Only now, on the failure path, is it worth blocking for the two shader logs.
         const logs = [gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs), gl.getProgramInfoLog(handle)];
         self.destroy();
-        throw new Error(`dotglobe: program failed to link. ${logs.filter(Boolean).join(' ')}`);
+        throw new Error(`globedots: program failed to link. ${logs.filter(Boolean).join(' ')}`);
       }
       gl.deleteShader(vs);
       gl.deleteShader(fs);
