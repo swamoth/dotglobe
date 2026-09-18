@@ -45,7 +45,8 @@
     "demo": "node bench/build.mjs && node bench/serve.mjs 5173",
     "bench:compare": "node bench/compare.mjs",
     "bake:land": "node scripts/bake-land.mjs 1024 512 write",
-    "prepublishOnly": "npm run build && npm test"
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "peerDependencies": {
     "react": ">=18"

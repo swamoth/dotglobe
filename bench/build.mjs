@@ -19,8 +19,8 @@ const useCoreBundle = {
   },
 };
 
+// The bundles only. The size gate calls this too, so it must leave the declarations in place.
 export async function bundle({ metafile = false } = {}) {
-  rmSync('dist', { recursive: true, force: true });
   const out = {};
   for (const [entry, outfile] of entries) {
     if (!existsSync(entry)) continue;
@@ -41,6 +41,7 @@ export async function bundle({ metafile = false } = {}) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  rmSync('dist', { recursive: true, force: true });
   await bundle();
   execFileSync('npx', ['tsc', '-p', 'tsconfig.build.json'], { stdio: 'inherit', shell: true });
   console.log('built dist/');
