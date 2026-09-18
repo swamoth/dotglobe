@@ -44,7 +44,8 @@
     "bench": "npm run bench:size && npm run bench:frame",
     "demo": "node bench/build.mjs && node bench/serve.mjs 5173",
     "bench:compare": "node bench/compare.mjs",
-    "bake:land": "node scripts/bake-land.mjs 1024 512 write"
+    "bake:land": "node scripts/bake-land.mjs 1024 512 write",
+    "prepublishOnly": "npm run build && npm test"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -65,5 +66,13 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swamoth/dotglobe.git"
+  },
+  "homepage": "https://github.com/swamoth/dotglobe#readme",
+  "bugs": {
+    "url": "https://github.com/swamoth/dotglobe/issues"
   }
 }

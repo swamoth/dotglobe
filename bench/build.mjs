@@ -42,6 +42,6 @@ export async function bundle({ metafile = false } = {}) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   await bundle();
-  execFileSync('npx', ['tsc', '--emitDeclarationOnly', '--declaration', '--outDir', 'dist'], { stdio: 'inherit', shell: true });
+  execFileSync('npx', ['tsc', '-p', 'tsconfig.build.json'], { stdio: 'inherit', shell: true });
   console.log('built dist/');
 }

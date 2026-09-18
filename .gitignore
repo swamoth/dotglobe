@@ -4,5 +4,4 @@ dist/
 bench/results/
 
 # Local agent tooling, not part of the library.
-.claude/*
-!.claude/launch.json
+.claude/
