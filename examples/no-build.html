@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>globedots, no build</title>
+<style>html, body { margin: 0; height: 100%; background: #0b0b0c; } canvas { width: 100%; height: 100%; }</style>
+<canvas id="globe"></canvas>
+<script type="module">
+import { createGlobe } from 'https://esm.sh/globedots';
+import { land } from 'https://esm.sh/globedots/land';
+
+const globe = createGlobe(document.getElementById('globe'), { autoRotate: 6, style: { night: 0.7 } });
+globe.setLand(...await land());
+globe.setSun(new Date());
+globe.setMarkers([
+  { lat: 51.5, lng: -0.13, color: '#ff7a45', title: 'London' },
+  { lat: 35.7, lng: 139.7, color: '#ff7a45', title: 'Tokyo' },
+]);
+globe.setArcs([{ startLat: 51.5, startLng: -0.13, endLat: 35.7, endLng: 139.7, appear: 1200 }]);
+</script>

@@ -39,6 +39,14 @@ await globe.ready;
 Drag to turn. Wheel or pinch to zoom. With the canvas focused, the arrow keys turn and
 `+` and `-` zoom. Call `globe.destroy()` when the canvas leaves the page.
 
+No build step: the same code runs from a CDN in one HTML file. See
+[examples/no-build.html](examples/no-build.html).
+
+```js
+import { createGlobe } from 'https://esm.sh/globedots';
+import { land } from 'https://esm.sh/globedots/land';
+```
+
 ## Options
 
 `createGlobe(canvas, options)`
@@ -195,7 +203,7 @@ leaves.
 | `globedots` | 48.4 kB | 18.4 kB |
 
 0.2 ms of CPU for a frame with 10 000 markers and 1000 arcs, 0 frames while idle. Measured
-with `npm run bench`.
+with `npm run bench`. Size check: https://bundlephobia.com/package/globedots
 
 ## Develop
 

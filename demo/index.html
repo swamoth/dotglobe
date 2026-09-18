@@ -136,7 +136,7 @@
   <ul>
     <li><a href="#story">Story</a></li>
     <li><a href="#install">Install</a></li>
-    <li><a href="https://github.com/swamoth/globedots">GitHub</a></li>
+    <li><a href="https://github.com/swamoth/globedots" id="stars">GitHub</a></li>
     <li><button type="button" id="open-debug">Debug</button></li>
   </ul>
 </header>
@@ -432,6 +432,11 @@ globe.on('click', (hit) => {
   }, 2200);
 });
 canvas.addEventListener('pointerdown', () => spin(0));
+
+// The star count, from the GitHub API. It fails quietly when the API rate limit is hit.
+fetch('https://api.github.com/repos/swamoth/globedots').then((r) => r.json()).then((r) => {
+  if (r.stargazers_count > 0) document.getElementById('stars').textContent = `GitHub ★ ${r.stargazers_count}`;
+}).catch(() => {});
 
 // ---- Debug panel ---------------------------------------------------------------------------
 
