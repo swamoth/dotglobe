@@ -1,6 +1,6 @@
 {
   "name": "globedots",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dot-matrix globe in WebGL2. One quad, one ray-cast sphere, no three.js.",
   "keywords": [
     "globe",
@@ -72,7 +72,7 @@
     "type": "git",
     "url": "git+https://github.com/swamoth/globedots.git"
   },
-  "homepage": "https://github.com/swamoth/globedots#readme",
+  "homepage": "https://swamoth.github.io/globedots/",
   "bugs": {
     "url": "https://github.com/swamoth/globedots/issues"
   }
