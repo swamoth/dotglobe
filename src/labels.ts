@@ -32,6 +32,8 @@ export interface LabelOptions {
 export interface LabelLayer {
   set(labels: readonly Label[], options?: LabelOptions): void;
   update(project: (lat: number, lng: number, altitude: number) => { x: number; y: number; visible: boolean }): void;
+  /** Show a tooltip next to a point, or hide it with null. */
+  tip(text: string | null, x: number, y: number): void;
   destroy(): void;
 }
 
@@ -46,11 +48,29 @@ export function createLabelLayer(canvas: HTMLCanvasElement): LabelLayer {
 
   let items: Item[] = [];
   let declutter = true;
+  let tooltip: HTMLElement | null = null;
 
   return {
+    tip(text, x, y) {
+      if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'dotglobe-tooltip';
+        tooltip.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;white-space:nowrap';
+        root.append(tooltip);
+        // A page that styles the class keeps its look. Otherwise a plain default applies.
+        if (getComputedStyle(tooltip).backgroundColor === 'rgba(0, 0, 0, 0)') {
+          tooltip.style.cssText += ';padding:4px 8px;border-radius:4px;background:#14161a;color:#e6e6e6;font:12px/1.4 system-ui,sans-serif';
+        }
+      }
+      tooltip.style.display = text === null ? 'none' : '';
+      if (text === null) return;
+      tooltip.textContent = text;
+      tooltip.style.transform = `translate(${x + 12}px,${y + 12}px)`;
+    },
     set(labels, options = {}) {
       declutter = options.declutter ?? true;
       root.replaceChildren();
+      if (tooltip) root.append(tooltip);
       items = labels.map((label) => {
         const el = label.element ?? document.createElement('div');
         if (label.text !== undefined) el.textContent = label.text;

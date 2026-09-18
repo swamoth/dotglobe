@@ -56,6 +56,8 @@ export interface Arc {
   delay?: number;
   /** Milliseconds to wait after the appear before the vanish starts. The default is 0. */
   vanishDelay?: number;
+  /** Text for a tooltip on hover. */
+  title?: string;
 }
 
 /** Texels across each data texture. */
@@ -356,6 +358,8 @@ export interface Path {
   vanish?: number;
   /** Milliseconds to wait before the path appears. */
   delay?: number;
+  /** Text for a tooltip on hover. */
+  title?: string;
 }
 
 /**

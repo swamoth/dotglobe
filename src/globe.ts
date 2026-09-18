@@ -321,6 +321,8 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   let lastX = 0, lastY = 0, lastMove = 0;
   let downX = 0, downY = 0, downTime = 0; // where the press began, to tell a click from a drag
   let hovering = false; // the last hover event was over the globe
+  let titled = false; // some marker, arc, or path has a title, so a hover shows a tooltip
+  const anyTitle = () => [markerList, stash.arcs, stash.paths].some((list: readonly { title?: string }[]) => list.some((x) => x.title !== undefined));
   const pointers = new Map<number, { x: number; y: number }>();
   let pinchStart = 0; // distance between two pointers when the pinch began
   let pinchAltitude = 0;
@@ -353,10 +355,14 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       return;
     }
     if (!dragging) {
-      // A pick costs one pass over the markers, so it runs only for a listener that wants it.
-      if (!listeners.get('hover')?.size && !listeners.get('click')?.size) return;
+      // A pick costs one pass over the markers, so it runs only for a listener or a title.
+      if (!listeners.get('hover')?.size && !listeners.get('click')?.size && !titled) return;
       const p = pickAt(e);
       canvas.style.cursor = p && (p.marker >= 0 || p.arc >= 0 || p.path >= 0) && listeners.get('click')?.size ? 'pointer' : '';
+      if (titled) {
+        const title = p && (p.marker >= 0 ? markerList[p.marker].title : p.arc >= 0 ? stash.arcs[p.arc].title : p.path >= 0 ? stash.paths[p.path].title : undefined);
+        (labelLayer ??= createLabelLayer(canvas)).tip(title ?? null, p?.x ?? 0, p?.y ?? 0);
+      }
       if (p || hovering) emit('hover', p);
       hovering = p !== null;
       return;
@@ -391,6 +397,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
   };
 
   const onPointerLeave = () => {
+    labelLayer?.tip(null, 0, 0);
     if (hovering) emit('hover', null);
     hovering = false;
     canvas.style.cursor = '';
@@ -514,6 +521,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       markerPass ??= createMarkerPass(gl);
       markerPass.set(markers);
       markerList = markers;
+      titled = anyTitle();
       // Keep the unit vector of each marker, so pick() needs no trigonometry for each marker.
       markerPoints = new Float32Array(markers.length * 3);
       for (let i = 0; i < markers.length; i++) {
@@ -526,6 +534,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     },
     setArcs(arcs) {
       stash.arcs = arcs;
+      titled = anyTitle();
       arcPick = arcs.length ? prepareArcs(arcs) : null;
       arcPass ??= createArcPass(gl);
       arcPass.set(arcs, reducedMotion ? null : clock);
@@ -533,6 +542,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     },
     setPaths(paths) {
       stash.paths = paths;
+      titled = anyTitle();
       // A path segment is short and nearly straight, so it needs far fewer steps than an arc.
       pathPass ??= createArcPass(gl, { segments: 6 });
       const segs = pathSegments(paths);

@@ -26,6 +26,8 @@ export interface Marker {
   opacity?: number;
   /** The default is a dot. */
   shape?: 'dot' | 'ring' | 'square' | 'diamond';
+  /** Text for a tooltip on hover. */
+  title?: string;
 }
 
 const SHAPES = { dot: 0, ring: 1, square: 2, diamond: 3 };

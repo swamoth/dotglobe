@@ -65,6 +65,9 @@ const at = globe.project(51.5, -0.13);   // CSS pixels, plus visible: false behi
 const hit = globe.pick(x, y);            // { lat, lng, marker, country, arc, path } or null
 ```
 
+A marker, an arc, or a path with a `title` shows it as a tooltip on hover. Style the
+`.dotglobe-tooltip` class to change its look.
+
 Events: `click`, `rightclick`, `hover`, `camera`, `render`, and `draw`, which hands you
 the view so you can draw your own WebGL layer with `globe.gl`. A label is an HTML element in a
 layer over the canvas. The globe hides a label behind the globe, and hides one that would
@@ -101,7 +104,7 @@ with the CPU throttled 4x to stand in for a mid phone.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Core bundle, gzipped | under 20 kB | 17.5 kB |
+| Core bundle, gzipped | under 20 kB | 17.8 kB |
 | Frame, CPU | under 4 ms | 0.20 ms |
 | Frame, GPU | — | 1.7 to 2.2 ms |
 | Main thread blocked at start | under 20 ms | 14 to 16 ms |
@@ -136,7 +139,7 @@ each. Measured from a NetEye checkout that has the old stack installed.
 | `globe.gl` | 1919 kB | 541.98 kB |
 | `three-globe` | 1607 kB | 455.53 kB |
 | `three` | 725 kB | 185.86 kB |
-| **dotglobe** | **46.4 kB** | **17.5 kB** |
+| **dotglobe** | **47.1 kB** | **17.8 kB** |
 
 react-globe.gl is 56.6 times the gzipped size of dotglobe. Each row is the whole library as an
 app imports it. globe.gl and three-globe build on kapsule and are not written to tree-shake, so
@@ -188,7 +191,7 @@ cache that the harness cannot clear.
 - [x] `pick` finds the arc or the path under a point, for a highlight on hover. 1000 arcs: under 1 ms
 - [x] A color ramp for per-dot data: `dataColor: ['#3b4261', '#7aa2f7', '#ff7a45']`
 - [x] `dotglobe/land`: a 7 kB land mask that ships with the package
-- [x] HTML labels with occlusion and declutter
+- [x] HTML labels with occlusion and declutter, and a tooltip from a `title`
 - [x] `toBlob` screenshot, WebGL context loss recovery, no drawing while out of view
 - [x] `imageLand` and `imageTint`: a land mask or a color for each dot from any equirectangular image
 - [x] Vanilla core, plus a React hook at `dotglobe/react`
