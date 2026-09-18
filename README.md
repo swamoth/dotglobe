@@ -2,7 +2,7 @@
 
 A dot-matrix globe on WebGL2. 18.4 kB gzipped, no dependency, no three.js.
 
-![A rotating dot globe with a day-night line, a glow, and arcs that draw themselves in](https://raw.githubusercontent.com/swamoth/dotglobe/main/media/globedots.gif)
+![A rotating dot globe with a day-night line, a glow, and arcs that draw themselves in](https://raw.githubusercontent.com/swamoth/globedots/main/media/globedots.gif)
 
 Markers, arcs, paths, bars, rings, labels, per-dot data, heat maps, borders, a day-night line,
 click and hover events, and picking. The globe draws only when something changes.

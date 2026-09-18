@@ -70,10 +70,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/swamoth/dotglobe.git"
+    "url": "git+https://github.com/swamoth/globedots.git"
   },
-  "homepage": "https://github.com/swamoth/dotglobe#readme",
+  "homepage": "https://github.com/swamoth/globedots#readme",
   "bugs": {
-    "url": "https://github.com/swamoth/dotglobe/issues"
+    "url": "https://github.com/swamoth/globedots/issues"
   }
 }
