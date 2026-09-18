@@ -7,6 +7,10 @@
  *
  * The shader hides a marker that the globe covers, with the same ray-sphere test that
  * `camera.project` runs on the CPU, so the screen and `project()` always agree.
+ *
+ * A transition keeps the last set in a second pair of textures, and the shader mixes the two by
+ * a uniform that runs from 0 to 1. A marker moves, grows, and recolors on the GPU, and the CPU
+ * uploads nothing while it does.
  */
 
 import { program, texture, upload, type Program, type TextureOptions } from './gl';
@@ -42,6 +46,9 @@ uniform vec3 uCamPos, uForward, uRight, uUp;
 uniform float uFocal, uAspect;
 uniform sampler2D uData;
 uniform sampler2D uColor;
+uniform sampler2D uPrevData;
+uniform sampler2D uPrevColor;
+uniform float uMix; // 1 draws the current set, less mixes in the last one
 uniform int uCols;
 
 out vec2 vCorner;
@@ -57,6 +64,12 @@ void main() {
   // The shape rides in the altitude channel as tens, because an altitude never reaches 10.
   vShape = floor(d.w / 10.0);
   d.w -= vShape * 10.0;
+  if (uMix < 1.0) {
+    vec4 p = texelFetch(uPrevData, at, 0);
+    p.w -= floor(p.w / 10.0) * 10.0;
+    d = mix(p, d, uMix);
+    vColor = mix(texelFetch(uPrevColor, at, 0), vColor, uMix);
+  }
 
   // The corners of the quad, in strip order.
   vCorner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1)) * 2.0 - 1.0;
@@ -114,10 +127,17 @@ void main() {
 }`;
 
 export interface MarkerPass {
-  /** Draws every marker. Returns false while the driver is still linking the shader. */
-  draw(v: View): boolean;
-  set(markers: readonly Marker[]): void;
+  /** Draws every marker. `seconds` is the globe clock, for a transition. */
+  draw(v: View, seconds: number): boolean;
+  /**
+   * Replace the set. With `transition` above 0, each marker moves from the one at its index in
+   * the last set over that many milliseconds, from `now` on the globe clock. A new marker grows
+   * in, and a removed one shrinks out.
+   */
+  set(markers: readonly Marker[], now?: number, transition?: number): void;
   readonly count: number;
+  /** Globe clock in seconds when the transition ends. -Infinity for none. */
+  readonly until: number;
   destroy(): void;
 }
 
@@ -129,20 +149,41 @@ export function createMarkerPass(gl: WebGL2RenderingContext): MarkerPass {
   const colorFormat: TextureOptions = { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE };
   const data = texture(gl, dataFormat);
   const color = texture(gl, colorFormat);
+  const prevData = texture(gl, dataFormat);
+  const prevColor = texture(gl, colorFormat);
 
-  let count = 0;
+  let count = 0; // markers in the current set
+  let drawn = 0; // instances to draw, which includes markers that shrink out
   let rows = 1;
+  let last: { d: Float32Array; c: Uint8Array; count: number } | null = null; // the CPU copy of the current set
+  let start = 0, length = 0; // the transition, in globe clock seconds
   upload(gl, data, dataFormat, new Float32Array(4), 1, 1);
   upload(gl, color, colorFormat, new Uint8Array(4), 1, 1);
 
   return {
     get count() { return count; },
-    draw(v) {
-      if (count === 0) return true;
+    get until() { return length > 0 ? start + length : -Infinity; },
+    draw(v, seconds) {
+      if (drawn === 0) return true;
       if (!prog.ready()) return false;
       const u = prog.uniforms;
       gl.useProgram(prog.handle);
       gl.bindVertexArray(vao);
+
+      // Ease the mix in and out. Past the end the shader reads the current set alone.
+      let mix = 1;
+      if (length > 0) {
+        const t = Math.min(1, Math.max(0, (seconds - start) / length));
+        mix = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+        if (t >= 1) { length = 0; drawn = count; }
+      }
+      gl.uniform1f(u.uMix, mix);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, prevData);
+      gl.uniform1i(u.uPrevData, 2);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, prevColor);
+      gl.uniform1i(u.uPrevColor, 3);
 
       gl.uniform3fv(u.uCamPos, v.position);
       gl.uniform3fv(u.uForward, v.forward);
@@ -159,14 +200,19 @@ export function createMarkerPass(gl: WebGL2RenderingContext): MarkerPass {
       gl.bindTexture(gl.TEXTURE_2D, color);
       gl.uniform1i(u.uColor, 1);
 
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawn);
       gl.bindVertexArray(null);
       return true;
     },
-    set(markers) {
+    set(markers, now = 0, transition = 0) {
       count = markers.length;
-      if (count === 0) return;
-      rows = Math.ceil(count / COLS);
+      const before = last;
+      // During a transition the pass draws the larger of the two sets. A marker that the new set
+      // lacks keeps its place and shrinks to nothing, and one the old set lacks grows from nothing.
+      drawn = transition > 0 && before ? Math.max(count, before.count) : count;
+      length = 0;
+      if (drawn === 0) { last = null; return; }
+      rows = Math.ceil(drawn / COLS);
       const cells = COLS * rows;
       const d = new Float32Array(cells * 4);
       const c = new Uint8Array(cells * 4);
@@ -182,14 +228,37 @@ export function createMarkerPass(gl: WebGL2RenderingContext): MarkerPass {
         c[i * 4 + 2] = b * 255;
         c[i * 4 + 3] = (m.opacity ?? 1) * 255;
       }
+      if (transition > 0 && before) {
+        // The last set, in the new layout. Beyond its own count it copies the new marker at
+        // size 0, so the marker grows in place. A removed marker gets its old data at size 0 in
+        // the new set, so it shrinks in place. Longitude takes the short way around.
+        const p = new Float32Array(cells * 4);
+        const pc = new Uint8Array(cells * 4);
+        p.set(before.d.subarray(0, Math.min(before.d.length, p.length)));
+        pc.set(before.c.subarray(0, Math.min(before.c.length, pc.length)));
+        for (let i = 0; i < drawn; i++) {
+          if (i >= before.count) { p.set(d.subarray(i * 4, i * 4 + 4), i * 4); p[i * 4 + 2] = 0; pc.set(c.subarray(i * 4, i * 4 + 4), i * 4); }
+          if (i >= count) { d.set(p.subarray(i * 4, i * 4 + 4), i * 4); d[i * 4 + 2] = 0; c.set(pc.subarray(i * 4, i * 4 + 4), i * 4); }
+          const dl = d[i * 4 + 1] - p[i * 4 + 1];
+          if (dl > 180) p[i * 4 + 1] += 360; else if (dl < -180) p[i * 4 + 1] -= 360;
+          p[i * 4 + 3] = (p[i * 4 + 3] % 10) + Math.floor(d[i * 4 + 3] / 10) * 10; // the new shape
+        }
+        upload(gl, prevData, dataFormat, p, COLS, rows);
+        upload(gl, prevColor, colorFormat, pc, COLS, rows);
+        start = now;
+        length = transition / 1000;
+      }
       upload(gl, data, dataFormat, d, COLS, rows);
       upload(gl, color, colorFormat, c, COLS, rows);
+      last = { d, c, count };
     },
     destroy() {
       prog.destroy();
       gl.deleteVertexArray(vao);
       gl.deleteTexture(data);
       gl.deleteTexture(color);
+      gl.deleteTexture(prevData);
+      gl.deleteTexture(prevColor);
     },
   };
 }

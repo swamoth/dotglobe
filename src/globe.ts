@@ -57,7 +57,8 @@ export interface Globe {
    * `style.dataColor` with its value. Build the values with `binPoints`. Null clears it.
    */
   setDotData(values: Float32Array | null, dots: number): void;
-  setMarkers(markers: readonly Marker[]): void;
+  /** With `transition`, each marker moves from the one at its index in the last set over that many milliseconds. */
+  setMarkers(markers: readonly Marker[], options?: { transition?: number }): void;
   setArcs(arcs: readonly Arc[]): void;
   /** Lines that follow the surface, for a cable or a route. */
   setPaths(paths: readonly Path[]): void;
@@ -238,7 +239,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
         && (!pathPass || pathPass.draw(v, [canvas.width, canvas.height], clock))
         && (!arcPass || arcPass.draw(v, [canvas.width, canvas.height], clock))
         && (!ringPass || ringPass.draw(v, clock))
-        && (!markerPass || markerPass.draw(v));
+        && (!markerPass || markerPass.draw(v, clock));
     } catch (error) {
       destroyed = true;
       failReady(error);
@@ -266,6 +267,7 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
     // What keeps frames coming on its own: a pulse, a travelling dash, a flight, and the two
     // camera motions below. Each one ends, and then the loop stops.
     let moving = !reducedMotion && ((ringPass !== null && ringPass.count > 0)
+      || (markerPass !== null && clock < markerPass.until)
       || (arcPass !== null && (arcPass.animated || clock < arcPass.until))
       || (pathPass !== null && (pathPass.animated || clock < pathPass.until)));
 
@@ -517,9 +519,9 @@ export function createGlobe(canvas: HTMLCanvasElement, options: GlobeOptions = {
       sphere.setSun(p.lat, p.lng);
       invalidate();
     },
-    setMarkers(markers) {
+    setMarkers(markers, options) {
       markerPass ??= createMarkerPass(gl);
-      markerPass.set(markers);
+      markerPass.set(markers, clock, reducedMotion ? 0 : options?.transition ?? 0);
       markerList = markers;
       titled = anyTitle();
       // Keep the unit vector of each marker, so pick() needs no trigonometry for each marker.
